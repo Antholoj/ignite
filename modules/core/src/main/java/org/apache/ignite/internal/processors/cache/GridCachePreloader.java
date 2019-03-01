@@ -19,15 +19,18 @@ package org.apache.ignite.internal.processors.cache;
 
 import java.util.Collection;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtFuture;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicAbstractUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.ForceRebalanceExchangeTask;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessageV2;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionExchangeId;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloaderAssignments;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,18 +45,6 @@ public interface GridCachePreloader {
      * @throws IgniteCheckedException If start failed.
      */
     public void start() throws IgniteCheckedException;
-
-    /**
-     * Stops preloading.
-     */
-    public void stop();
-
-    /**
-     * Kernal start callback.
-     *
-     * @throws IgniteCheckedException If failed.
-     */
-    public void onKernalStart() throws IgniteCheckedException;
 
     /**
      * Kernal stop callback.
@@ -73,24 +64,35 @@ public interface GridCachePreloader {
     public void onInitialExchangeComplete(@Nullable Throwable err);
 
     /**
-     * @param exchFut Exchange future to assign.
-     * @return Assignments or {@code null} if detected that there are pending exchanges.
+     * @param rebTopVer Previous rebalance topology version or {@code NONE} if there is no info.
+     * @param exchFut Completed exchange future.
+     * @return {@code True} if rebalance should be started (previous will be interrupted).
      */
-    @Nullable public GridDhtPreloaderAssignments assign(GridDhtPartitionsExchangeFuture exchFut);
+    public boolean rebalanceRequired(AffinityTopologyVersion rebTopVer, GridDhtPartitionsExchangeFuture exchFut);
+
+    /**
+     * @param exchId Exchange ID.
+     * @param exchFut Completed exchange future. Can be {@code null} if forced or reassigned generation occurs.
+     * @return Partition assignments which will be requested from supplier nodes.
+     */
+    @Nullable public GridDhtPreloaderAssignments generateAssignments(GridDhtPartitionExchangeId exchId,
+                                                                     @Nullable GridDhtPartitionsExchangeFuture exchFut);
 
     /**
      * Adds assignments to preloader.
      *
      * @param assignments Assignments to add.
-     * @param forcePreload Force preload flag.
-     * @param caches Rebalancing of these caches will be finished before this started.
-     * @param cnt Counter.
-     * @return Rebalancing closure.
+     * @param forcePreload {@code True} if preload requested by {@link ForceRebalanceExchangeTask}.
+     * @param rebalanceId Rebalance id created by exchange thread.
+     * @param next Runnable responsible for cache rebalancing chain.
+     * @param forcedRebFut External future for forced rebalance.
+     * @return Rebalancing runnable.
      */
-    public Callable<Boolean> addAssignments(GridDhtPreloaderAssignments assignments,
+    public Runnable addAssignments(GridDhtPreloaderAssignments assignments,
         boolean forcePreload,
-        Collection<String> caches,
-        int cnt);
+        long rebalanceId,
+        Runnable next,
+        @Nullable GridCompoundFuture<Boolean, Boolean> forcedRebFut);
 
     /**
      * @param p Preload predicate.
@@ -120,7 +122,6 @@ public interface GridCachePreloader {
      * Future result is {@code false} in case rebalancing cancelled or finished with missed partitions and will be
      * restarted at current or pending topology.
      *
-     * Note that topology change creates new futures and finishes previous.
      */
     public IgniteInternalFuture<Boolean> rebalanceFuture();
 
@@ -133,16 +134,31 @@ public interface GridCachePreloader {
     /**
      * Requests that preloader sends the request for the key.
      *
+     * @param cctx Cache context.
      * @param keys Keys to request.
      * @param topVer Topology version, {@code -1} if not required.
      * @return Future to complete when all keys are preloaded.
      */
-    public IgniteInternalFuture<Object> request(Collection<KeyCacheObject> keys, AffinityTopologyVersion topVer);
+    public GridDhtFuture<Object> request(GridCacheContext cctx,
+        Collection<KeyCacheObject> keys,
+        AffinityTopologyVersion topVer);
 
     /**
-     * Force preload process.
+     * Requests that preloader sends the request for the key.
+     *
+     * @param cctx Cache context.
+     * @param req Message with keys to request.
+     * @param topVer Topology version, {@code -1} if not required.
+     * @return Future to complete when all keys are preloaded.
      */
-    public void forcePreload();
+    public GridDhtFuture<Object> request(GridCacheContext cctx,
+        GridNearAtomicAbstractUpdateRequest req,
+        AffinityTopologyVersion topVer);
+
+    /**
+     * Force Rebalance process.
+     */
+    public IgniteInternalFuture<Boolean> forceRebalance();
 
     /**
      * Unwinds undeploys.
@@ -156,7 +172,7 @@ public interface GridCachePreloader {
      * @param id Node Id.
      * @param s Supply message.
      */
-    public void handleSupplyMessage(int idx, UUID id, final GridDhtPartitionSupplyMessageV2 s);
+    public void handleSupplyMessage(int idx, UUID id, final GridDhtPartitionSupplyMessage s);
 
     /**
      * Handles Demand message.
@@ -168,13 +184,6 @@ public interface GridCachePreloader {
     public void handleDemandMessage(int idx, UUID id, GridDhtPartitionDemandMessage d);
 
     /**
-     * Evicts partition asynchronously.
-     *
-     * @param part Partition.
-     */
-    public void evictPartitionAsync(GridDhtLocalPartition part);
-
-    /**
      * @param lastFut Last future.
      */
     public void onTopologyChanged(GridDhtPartitionsExchangeFuture lastFut);
@@ -183,4 +192,14 @@ public interface GridCachePreloader {
      * Dumps debug information.
      */
     public void dumpDebugInfo();
+
+    /**
+     *  Pause preloader.
+     */
+    public void pause();
+
+    /**
+     * Resume preloader.
+     */
+    public void resume();
 }

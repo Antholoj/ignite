@@ -38,6 +38,7 @@ import java.util.logging.Logger;
 import javax.net.ssl.SSLContext;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.failure.FailureType;
 import org.apache.ignite.internal.client.GridClientClosedException;
 import org.apache.ignite.internal.client.GridClientConfiguration;
 import org.apache.ignite.internal.client.GridClientException;
@@ -84,6 +85,9 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
 
     /** Class logger. */
     private final Logger log;
+
+    /** All local enabled MACs. */
+    private final Collection<String> macs;
 
     /** NIO server. */
     private GridNioServer srv;
@@ -166,6 +170,8 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
         if (marshId == null && cfg.getMarshaller() == null)
             throw new GridClientException("Failed to start client (marshaller is not configured).");
 
+        macs = U.allLocalMACs();
+
         if (cfg.getProtocol() == GridClientProtocol.TCP) {
             try {
                 IgniteLogger gridLog = new JavaLogger(false);
@@ -178,7 +184,6 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
                     GridNioSslFilter sslFilter = new GridNioSslFilter(sslCtx, true, ByteOrder.nativeOrder(), gridLog);
 
                     sslFilter.directMode(false);
-                    sslFilter.clientMode(true);
 
                     filters = new GridNioFilter[]{codecFilter, sslFilter};
                 }
@@ -199,7 +204,8 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
                     .socketReceiveBufferSize(0)
                     .socketSendBufferSize(0)
                     .idleTimeout(Long.MAX_VALUE)
-                    .gridName(routerClient ? "routerClient" : "gridClient")
+                    .igniteInstanceName(routerClient ? "routerClient" : "gridClient")
+                    .serverName("tcp-client")
                     .daemon(cfg.isDaemon())
                     .build();
 
@@ -315,7 +321,7 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
         }
 
         boolean sameHost = node.attributes().isEmpty() ||
-            F.containsAny(U.allLocalMACs(), node.attribute(ATTR_MACS).toString().split(", "));
+            F.containsAny(macs, node.attribute(ATTR_MACS).toString().split(", "));
 
         Collection<InetSocketAddress> srvs = new LinkedHashSet<>();
 
@@ -467,7 +473,7 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
                 try {
                     conn = new GridClientNioTcpConnection(srv, clientId, addr, sslCtx, pingExecutor,
                         cfg.getConnectTimeout(), cfg.getPingInterval(), cfg.getPingTimeout(),
-                        cfg.isTcpNoDelay(), marsh, marshId, top, cred, keepBinariesThreadLocal());
+                        cfg.isTcpNoDelay(), marsh, marshId, top, cred);
                 }
                 catch (GridClientException e) {
                     if (marsh instanceof GridClientZipOptimizedMarshaller) {
@@ -477,7 +483,7 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
                         conn = new GridClientNioTcpConnection(srv, clientId, addr, sslCtx, pingExecutor,
                             cfg.getConnectTimeout(), cfg.getPingInterval(), cfg.getPingTimeout(),
                             cfg.isTcpNoDelay(), ((GridClientZipOptimizedMarshaller)marsh).defaultMarshaller(), marshId,
-                            top, cred, keepBinariesThreadLocal());
+                            top, cred);
                     }
                     else
                         throw e;
@@ -499,13 +505,6 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
         finally {
             endpointStripedLock.unlock(addr);
         }
-    }
-
-    /**
-     * @return Get thread local used to enable keep binary mode.
-     */
-    protected ThreadLocal<Boolean> keepBinariesThreadLocal() {
-        return null;
     }
 
     /** {@inheritDoc} */
@@ -626,6 +625,11 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
         }
 
         /** {@inheritDoc} */
+        @Override public void onMessageSent(GridNioSession ses, Object msg) {
+            // No-op.
+        }
+
+        /** {@inheritDoc} */
         @Override public void onMessage(GridNioSession ses, Object msg) {
             GridClientFutureAdapter<Boolean> handshakeFut =
                 ses.removeMeta(GridClientNioTcpConnection.SES_META_HANDSHAKE);
@@ -651,6 +655,11 @@ public abstract class GridClientConnectionManagerAdapter implements GridClientCo
                     }
                 }
             }
+        }
+
+        /** {@inheritDoc} */
+        @Override public void onFailure(FailureType failureType, Throwable failure) {
+            // No-op.
         }
 
         /**

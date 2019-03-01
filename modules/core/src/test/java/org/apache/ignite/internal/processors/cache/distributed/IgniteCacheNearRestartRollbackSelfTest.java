@@ -31,6 +31,7 @@ import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.MutableEntry;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
@@ -42,12 +43,11 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionRollbackException;
+import org.junit.Test;
 
 import static org.apache.ignite.transactions.TransactionConcurrency.PESSIMISTIC;
 import static org.apache.ignite.transactions.TransactionIsolation.REPEATABLE_READ;
@@ -56,31 +56,23 @@ import static org.apache.ignite.transactions.TransactionIsolation.REPEATABLE_REA
  *
  */
 public class IgniteCacheNearRestartRollbackSelfTest extends GridCommonAbstractTest {
-    /** Shared IP finder. */
-    private static final TcpDiscoveryIpFinder IP_FINDER = new TcpDiscoveryVmIpFinder(true);
-
     /**
      * The number of entries to put to the test cache.
      */
     private static final int ENTRY_COUNT = 100;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
-        TcpDiscoverySpi discoSpi = new TcpDiscoverySpi();
+        cfg.setClientFailureDetectionTimeout(50000);
 
-        discoSpi.setIpFinder(IP_FINDER);
-        discoSpi.setMaxMissedClientHeartbeats(50);
+        cfg.setCacheConfiguration(cacheConfiguration(igniteInstanceName));
 
-        cfg.setDiscoverySpi(discoSpi);
-
-        cfg.setCacheConfiguration(cacheConfiguration(gridName));
-
-        if (getTestGridName(3).equals(gridName)) {
+        if (getTestIgniteInstanceName(3).equals(igniteInstanceName)) {
             cfg.setClientMode(true);
 
-            discoSpi.setForceServerMode(true);
+            ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setForceServerMode(true);
         }
 
         TcpCommunicationSpi commSpi = new TcpCommunicationSpi();
@@ -93,11 +85,11 @@ public class IgniteCacheNearRestartRollbackSelfTest extends GridCommonAbstractTe
     }
 
     /**
-     * @param gridName Grid name.
+     * @param igniteInstanceName Ignite instance name.
      * @return Cache configuration.
      */
-    protected CacheConfiguration<Object, Object> cacheConfiguration(String gridName) {
-        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>();
+    protected CacheConfiguration<Object, Object> cacheConfiguration(String igniteInstanceName) {
+        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
         ccfg.setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL);
 
@@ -115,7 +107,7 @@ public class IgniteCacheNearRestartRollbackSelfTest extends GridCommonAbstractTe
     /**
      * @throws Exception If failed.
      */
-    @SuppressWarnings("SynchronizationOnLocalVariableOrMethodParameter")
+    @Test
     public void testRestarts() throws Exception {
         startGrids(4);
 
@@ -205,7 +197,7 @@ public class IgniteCacheNearRestartRollbackSelfTest extends GridCommonAbstractTe
         boolean rollback,
         Set<Integer> keys
     ) {
-        final IgniteCache<Integer, Integer> cache = ignite.cache(null);
+        final IgniteCache<Integer, Integer> cache = ignite.cache(DEFAULT_CACHE_NAME);
 
         if (rollback) {
             while (true) {

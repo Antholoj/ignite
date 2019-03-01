@@ -18,8 +18,11 @@
 namespace Apache.Ignite.Core.Impl.Common
 {
     using System;
+    using System.Diagnostics.CodeAnalysis;
     using System.Text;
     using System.IO;
+    using Apache.Ignite.Core.Impl.Unmanaged;
+    using Apache.Ignite.Core.Log;
 
     /// <summary>
     /// Classpath resolver.
@@ -32,16 +35,22 @@ namespace Apache.Ignite.Core.Impl.Common
         /** Classpath prefix. */
         private const string ClasspathPrefix = "-Djava.class.path=";
 
+        /** Classpath separator. */
+        [SuppressMessage("Microsoft.Performance", "CA1802:UseLiteralsWhereAppropriate")]
+        private static readonly string ClasspathSeparator = Os.IsWindows ? ";" : ":";
+
         /// <summary>
         /// Creates classpath from the given configuration, or default classpath if given config is null.
         /// </summary>
         /// <param name="cfg">The configuration.</param>
         /// <param name="forceTestClasspath">Append test directories even if
-        ///     <see cref="EnvIgniteNativeTestClasspath" /> is not set.</param>
+        /// <see cref="EnvIgniteNativeTestClasspath" /> is not set.</param>
+        /// <param name="log">The log.</param>
         /// <returns>
         /// Classpath string.
         /// </returns>
-        internal static string CreateClasspath(IgniteConfiguration cfg = null, bool forceTestClasspath = false)
+        internal static string CreateClasspath(IgniteConfiguration cfg = null, bool forceTestClasspath = false, 
+            ILogger log = null)
         {
             var cpStr = new StringBuilder();
 
@@ -49,16 +58,24 @@ namespace Apache.Ignite.Core.Impl.Common
             {
                 cpStr.Append(cfg.JvmClasspath);
 
-                if (!cfg.JvmClasspath.EndsWith(";"))
-                    cpStr.Append(';');
+                if (!cfg.JvmClasspath.EndsWith(ClasspathSeparator))
+                    cpStr.Append(ClasspathSeparator);
             }
 
-            var ggHome = IgniteHome.Resolve(cfg);
+            var ggHome = IgniteHome.Resolve(cfg, log);
 
             if (!string.IsNullOrWhiteSpace(ggHome))
                 AppendHomeClasspath(ggHome, forceTestClasspath, cpStr);
 
-            return ClasspathPrefix + cpStr;
+            if (log != null)
+            {
+                log.Debug("Classpath resolved to: {0}", cpStr);
+            }
+
+            var res = cpStr.ToString();
+            res = res.StartsWith(ClasspathPrefix) ? res : ClasspathPrefix + res;
+
+            return res;
         }
 
         /// <summary>
@@ -73,11 +90,12 @@ namespace Apache.Ignite.Core.Impl.Common
             // Append test directories (if needed) first, because otherwise build *.jar will be picked first.
             if (forceTestClasspath || "true".Equals(Environment.GetEnvironmentVariable(EnvIgniteNativeTestClasspath)))
             {
-                AppendTestClasses(ggHome + "\\examples", cpStr);
-                AppendTestClasses(ggHome + "\\modules", cpStr);
+                AppendTestClasses(Path.Combine(ggHome, "examples"), cpStr);
+                AppendTestClasses(Path.Combine(ggHome, "modules"), cpStr);
+                AppendTestClasses(Path.Combine(ggHome, "modules", "extdata", "platform"), cpStr);
             }
 
-            string ggLibs = ggHome + "\\libs";
+            string ggLibs = Path.Combine(ggHome, "libs");
 
             AppendJars(ggLibs, cpStr);
 
@@ -117,14 +135,23 @@ namespace Apache.Ignite.Core.Impl.Common
             if (path.EndsWith("rest-http", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            if (Directory.Exists(path + "\\target\\classes"))
-                cp.Append(path + "\\target\\classes;");
+            var dir = Path.Combine(path, "target", "classes");
+            if (Directory.Exists(dir))
+            {
+                cp.Append(dir).Append(ClasspathSeparator);
+            }
 
-            if (Directory.Exists(path + "\\target\\test-classes"))
-                cp.Append(path + "\\target\\test-classes;");
+            dir = Path.Combine(path, "target", "test-classes");
+            if (Directory.Exists(dir))
+            {
+                cp.Append(dir).Append(ClasspathSeparator);
+            }
 
-            if (Directory.Exists(path + "\\target\\libs"))
-                AppendJars(path + "\\target\\libs", cp);
+            dir = Path.Combine(path, "target", "libs");
+            if (Directory.Exists(dir))
+            {
+                AppendJars(dir, cp);
+            }
         }
 
         /// <summary>
@@ -136,10 +163,9 @@ namespace Apache.Ignite.Core.Impl.Common
         {
             if (Directory.Exists(path))
             {
-                foreach (string jar in Directory.EnumerateFiles(path, "*.jar"))
+                foreach (var jar in Directory.EnumerateFiles(path, "*.jar"))
                 {
-                    cpStr.Append(jar);
-                    cpStr.Append(';');
+                    cpStr.Append(jar).Append(ClasspathSeparator);
                 }
             }
         }

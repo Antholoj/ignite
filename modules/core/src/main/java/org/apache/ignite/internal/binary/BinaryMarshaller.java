@@ -24,8 +24,9 @@ import java.io.OutputStream;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.configuration.IgniteConfiguration;
-import org.apache.ignite.marshaller.AbstractMarshaller;
-import org.apache.ignite.marshaller.MarshallerContext;
+import org.apache.ignite.internal.util.tostring.GridToStringExclude;
+import org.apache.ignite.internal.util.typedef.internal.S;
+import org.apache.ignite.marshaller.AbstractNodeNameAwareMarshaller;
 import org.jetbrains.annotations.Nullable;
 import sun.misc.Unsafe;
 
@@ -33,8 +34,9 @@ import sun.misc.Unsafe;
  * Implementation of {@link org.apache.ignite.marshaller.Marshaller} that lets to serialize and deserialize all objects
  * in the binary format.
  */
-public class BinaryMarshaller extends AbstractMarshaller {
+public class BinaryMarshaller extends AbstractNodeNameAwareMarshaller {
     /** */
+    @GridToStringExclude
     private GridBinaryMarshaller impl;
 
     /**
@@ -67,20 +69,10 @@ public class BinaryMarshaller extends AbstractMarshaller {
     }
 
     /**
-     * Returns currently set {@link MarshallerContext}.
-     *
-     * @return Marshaller context.
-     */
-    public MarshallerContext getContext() {
-        return ctx;
-    }
-
-    /**
      * Sets {@link BinaryContext}.
      * <p/>
      * @param ctx Binary context.
      */
-    @SuppressWarnings("UnusedDeclaration")
     private void setBinaryContext(BinaryContext ctx, IgniteConfiguration cfg) {
         ctx.configure(this, cfg);
 
@@ -88,29 +80,29 @@ public class BinaryMarshaller extends AbstractMarshaller {
     }
 
     /** {@inheritDoc} */
-    @Override public byte[] marshal(@Nullable Object obj) throws IgniteCheckedException {
-        return impl.marshal(obj);
+    @Override protected byte[] marshal0(@Nullable Object obj) throws IgniteCheckedException {
+        return impl.marshal(obj, false);
     }
 
     /** {@inheritDoc} */
-    @Override public void marshal(@Nullable Object obj, OutputStream out) throws IgniteCheckedException {
+    @Override protected void marshal0(@Nullable Object obj, OutputStream out) throws IgniteCheckedException {
         byte[] arr = marshal(obj);
 
         try {
             out.write(arr);
         }
-        catch (IOException e) {
+        catch (Exception e) {
             throw new BinaryObjectException("Failed to marshal the object: " + obj, e);
         }
     }
 
     /** {@inheritDoc} */
-    @Override public <T> T unmarshal(byte[] bytes, @Nullable ClassLoader clsLdr) throws IgniteCheckedException {
+    @Override protected <T> T unmarshal0(byte[] bytes, @Nullable ClassLoader clsLdr) throws IgniteCheckedException {
         return impl.deserialize(bytes, clsLdr);
     }
 
     /** {@inheritDoc} */
-    @Override public <T> T unmarshal(InputStream in, @Nullable ClassLoader clsLdr) throws IgniteCheckedException {
+    @Override protected <T> T unmarshal0(InputStream in, @Nullable ClassLoader clsLdr) throws IgniteCheckedException {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
 
         // we have to fully read the InputStream because GridBinaryMarshaller requires support of a method that
@@ -135,5 +127,17 @@ public class BinaryMarshaller extends AbstractMarshaller {
     /** {@inheritDoc} */
     @Override public void onUndeploy(ClassLoader ldr) {
         impl.context().onUndeploy(ldr);
+    }
+
+    /**
+     * @return GridBinaryMarshaller instance.
+     */
+    public GridBinaryMarshaller binaryMarshaller() {
+        return impl;
+    }
+
+    /** {@inheritDoc} */
+    @Override public String toString() {
+        return S.toString(BinaryMarshaller.class, this);
     }
 }

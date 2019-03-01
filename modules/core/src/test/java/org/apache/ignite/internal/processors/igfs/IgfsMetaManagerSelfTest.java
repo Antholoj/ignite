@@ -27,9 +27,7 @@ import org.apache.ignite.igfs.IgfsPath;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgniteUuid;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
@@ -37,6 +35,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
@@ -50,9 +49,6 @@ import static org.apache.ignite.testframework.GridTestUtils.assertThrowsInherite
  * {@link IgfsMetaManager} test case.
  */
 public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
-    /** Test IP finder. */
-    private static final TcpDiscoveryIpFinder IP_FINDER = new TcpDiscoveryVmIpFinder(true);
-
     /** Meta-information cache name. */
     private static final String META_CACHE_NAME = "replicated";
 
@@ -73,21 +69,13 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
     }
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
-
-        cfg.setCacheConfiguration(cacheConfiguration(META_CACHE_NAME), cacheConfiguration(DATA_CACHE_NAME));
-
-        TcpDiscoverySpi discoSpi = new TcpDiscoverySpi();
-
-        discoSpi.setIpFinder(IP_FINDER);
-
-        cfg.setDiscoverySpi(discoSpi);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         FileSystemConfiguration igfsCfg = new FileSystemConfiguration();
 
-        igfsCfg.setMetaCacheName(META_CACHE_NAME);
-        igfsCfg.setDataCacheName(DATA_CACHE_NAME);
+        igfsCfg.setMetaCacheConfiguration(cacheConfiguration(META_CACHE_NAME));
+        igfsCfg.setDataCacheConfiguration(cacheConfiguration(DATA_CACHE_NAME));
         igfsCfg.setName("igfs");
 
         cfg.setFileSystemConfiguration(igfsCfg);
@@ -96,7 +84,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
     }
 
     /** {@inheritDoc} */
-    protected CacheConfiguration cacheConfiguration(String cacheName) {
+    protected CacheConfiguration cacheConfiguration(@NotNull String cacheName) {
         CacheConfiguration cacheCfg = defaultCacheConfiguration();
 
         cacheCfg.setName(cacheName);
@@ -119,7 +107,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
 
     /** {@inheritDoc} */
     @Override protected void afterTest() throws Exception {
-        mgr.igfsCtx.igfs().format();
+        mgr.igfsCtx.igfs().clear();
     }
 
     /** {@inheritDoc} */
@@ -127,22 +115,17 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
         startGrids(NODES_CNT);
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-    }
-
     /**
      * Test properties management in meta-cache.
      *
      * @throws Exception If failed.
      */
-    @SuppressWarnings("NullableProblems")
+    @Test
     public void testUpdateProperties() throws Exception {
         assertEmpty(mgr.directoryListing(ROOT_ID));
 
         assertTrue(mgr.mkdirs(new IgfsPath("/dir"), IgfsImpl.DFLT_DIR_META));
-        assertNotNull(mgr.create(new IgfsPath("/file"), null, false, 400, null, false, null));
+        assertNotNull(mgr.create(new IgfsPath("/file"), null, false, 400, null, false, null, null));
 
         IgfsListingEntry dirEntry = mgr.directoryListing(ROOT_ID).get("dir");
         assertNotNull(dirEntry);
@@ -158,7 +141,6 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
 
         for (IgniteBiTuple<IgniteUuid, String> tup: Arrays.asList(F.t(dir.id(), "dir"), F.t(file.id(), "file"))) {
             IgniteUuid fileId = tup.get1();
-            String fileName = tup.get2();
 
             for (Map<String, String> props : Arrays.asList(null, Collections.<String, String>emptyMap()))
                 expectsUpdatePropertiesFail(fileId, props, AssertionError.class, "Expects not-empty file's properties");
@@ -191,8 +173,8 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
             assertNull("Unexpected stored properties: " + info, info.properties().get(key2));
         }
 
-        mgr.softDelete(new IgfsPath("/dir"), true);
-        mgr.softDelete(new IgfsPath("/file"), false);
+        mgr.softDelete(new IgfsPath("/dir"), true, null);
+        mgr.softDelete(new IgfsPath("/file"), false, null);
 
         assertNull(mgr.updateProperties(dir.id(), F.asMap("p", "7")));
     }
@@ -214,7 +196,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
     private IgfsEntryInfo createFileAndGetInfo(String path) throws IgniteCheckedException {
         IgfsPath p = path(path);
 
-        IgfsEntryInfo res = mgr.create(p, null, false, 400, null, false, null);
+        IgfsEntryInfo res = mgr.create(p, null, false, 400, null, false, null, null).info();
 
         assert res != null;
         assert !res.isDirectory();
@@ -227,6 +209,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testStructure() throws Exception {
         IgfsEntryInfo rootInfo = IgfsUtils.createDirectory(ROOT_ID);
 
@@ -266,7 +249,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
         }
 
         // Validate 'file ID' operations.
-        assertEquals(ROOT_ID, mgr.fileId(new IgfsPath("/")));
+        assertEquals(ROOT_ID, mgr.fileId(IgfsPath.ROOT));
         assertEquals(a.id(), mgr.fileId(new IgfsPath("/a")));
         assertEquals(b.id(), mgr.fileId(new IgfsPath("/a/b")));
         assertEquals(f1.id(), mgr.fileId(new IgfsPath("/f1")));
@@ -285,7 +268,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
         assertNull(mgr.fileId(a.id(), "f5"));
         assertNull(mgr.fileId(b.id(), "f6"));
 
-        assertEquals(Arrays.asList(ROOT_ID), mgr.fileIds(new IgfsPath("/")));
+        assertEquals(Arrays.asList(ROOT_ID), mgr.fileIds(IgfsPath.ROOT));
         assertEquals(Arrays.asList(ROOT_ID, a.id()), mgr.fileIds(new IgfsPath("/a")));
         assertEquals(Arrays.asList(ROOT_ID, a.id(), b.id()), mgr.fileIds(new IgfsPath("/a/b")));
         assertEquals(Arrays.asList(ROOT_ID, f1.id()), mgr.fileIds(new IgfsPath("/f1")));
@@ -328,9 +311,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
 
         mgr.move(path("/a2"), path("/a"));
 
-        IgniteUuid del = mgr.softDelete(path("/a/b/f3"), false);
-
-        assertEquals(f3.id(), del);
+        mgr.softDelete(path("/a/b/f3"), false, null);
 
         assertEquals(F.asMap("a", new IgfsListingEntry(a), "f1", new IgfsListingEntry(f1)),
                 mgr.directoryListing(ROOT_ID));
@@ -341,8 +322,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
         assertEmpty(mgr.directoryListing(b.id()));
 
         //assertEquals(b, mgr.removeIfEmpty(a.id(), "b", b.id(), new IgfsPath("/a/b"), true));
-        del = mgr.softDelete(path("/a/b"), false);
-        assertEquals(b.id(), del);
+        mgr.softDelete(path("/a/b"), false, null);
 
         assertEquals(F.asMap("a", new IgfsListingEntry(a), "f1", new IgfsListingEntry(f1)),
             mgr.directoryListing(ROOT_ID));
@@ -351,8 +331,7 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
 
         assertEmpty(mgr.directoryListing(b.id()));
 
-        del = mgr.softDelete(path("/a/f2"), false);
-        assertEquals(f2.id(), del);
+        mgr.softDelete(path("/a/f2"), false, null);
 
         assertEquals(F.asMap("a", new IgfsListingEntry(a), "f1", new IgfsListingEntry(f1)),
             mgr.directoryListing(ROOT_ID));
@@ -360,16 +339,14 @@ public class IgfsMetaManagerSelfTest extends IgfsCommonAbstractTest {
         assertEmpty(mgr.directoryListing(a.id()));
         assertEmpty(mgr.directoryListing(b.id()));
 
-        del = mgr.softDelete(path("/f1"), false);
-        assertEquals(f1.id(), del);
+        mgr.softDelete(path("/f1"), false, null);
 
         assertEquals(F.asMap("a", new IgfsListingEntry(a)), mgr.directoryListing(ROOT_ID));
 
         assertEmpty(mgr.directoryListing(a.id()));
         assertEmpty(mgr.directoryListing(b.id()));
 
-        del = mgr.softDelete(path("/a"), false);
-        assertEquals(a.id(), del);
+        mgr.softDelete(path("/a"), false, null);
 
         assertEmpty(mgr.directoryListing(ROOT_ID));
         assertEmpty(mgr.directoryListing(a.id()));

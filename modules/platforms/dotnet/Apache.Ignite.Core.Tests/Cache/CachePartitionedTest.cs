@@ -17,10 +17,13 @@
 
 namespace Apache.Ignite.Core.Tests.Cache
 {
+    using Apache.Ignite.Core.Cache;
+    using Apache.Ignite.Core.Cache.Configuration;
+    using Apache.Ignite.Core.Transactions;
     using NUnit.Framework;
 
     [Category(TestUtils.CategoryIntensive)]
-    public class CachePartitionedTest : CacheAbstractTest
+    public class CachePartitionedTest : CacheAbstractTransactionalTest
     {
         protected override int GridCount()
         {
@@ -37,14 +40,43 @@ namespace Apache.Ignite.Core.Tests.Cache
             return false;
         }
 
-        protected override bool TxEnabled()
-        {
-            return true;
-        }
-
         protected override int Backups()
         {
             return 1;
+        }
+
+        /// <summary>
+        /// Test MVCC transaction.
+        /// </summary>
+        [Test]
+        public void TestMvccTransaction()
+        {
+            IIgnite ignite = GetIgnite(0);
+
+            ICache<int, int> cache = ignite.GetOrCreateCache<int, int>(new CacheConfiguration
+            {
+                Name = "mvcc",
+                AtomicityMode = CacheAtomicityMode.TransactionalSnapshot
+            });
+
+            ITransaction tx = ignite.GetTransactions().TxStart();
+
+            cache.Put(1, 1);
+            cache.Put(2, 2);
+
+            tx.Commit();
+
+            Assert.AreEqual(1, cache.Get(1));
+            Assert.AreEqual(2, cache.Get(2));
+
+            tx = ignite.GetTransactions().TxStart();
+
+            Assert.AreEqual(1, cache.Get(1));
+            Assert.AreEqual(2, cache.Get(2));
+
+            tx.Commit();
+
+            ignite.DestroyCache("mvcc");
         }
     }
 }

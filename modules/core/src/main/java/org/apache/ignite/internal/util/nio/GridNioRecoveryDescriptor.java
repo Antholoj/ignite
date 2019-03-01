@@ -22,21 +22,29 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.jetbrains.annotations.Nullable;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_NIO_RECOVERY_DESCRIPTOR_RESERVATION_TIMEOUT;
+
 /**
  * Recovery information for single node.
  */
 public class GridNioRecoveryDescriptor {
+    /** Timeout for outgoing recovery descriptor reservation. */
+    private static final long DESC_RESERVATION_TIMEOUT =
+        Math.max(1_000, IgniteSystemProperties.getLong(IGNITE_NIO_RECOVERY_DESCRIPTOR_RESERVATION_TIMEOUT, 5_000));
+
     /** Number of acknowledged messages. */
     private long acked;
 
-    /** Unacknowledged message futures. */
-    private final ArrayDeque<GridNioFuture<?>> msgFuts;
+    /** Unacknowledged messages. */
+    private final ArrayDeque<SessionWriteRequest> msgReqs;
 
     /** Number of messages to resend. */
     private int resendCnt;
@@ -74,20 +82,44 @@ public class GridNioRecoveryDescriptor {
     /** Maximum size of unacknowledged messages queue. */
     private final int queueLimit;
 
+    /** Number of descriptor reservations (for info purposes). */
+    private int reserveCnt;
+
+    /** */
+    private final boolean pairedConnections;
+
+    /** Session for the descriptor. */
+    @GridToStringExclude
+    private GridNioSession ses;
+
     /**
+     * @param pairedConnections {@code True} if in/out connections pair is used for communication with node.
      * @param queueLimit Maximum size of unacknowledged messages queue.
      * @param node Node.
      * @param log Logger.
      */
-    public GridNioRecoveryDescriptor(int queueLimit, ClusterNode node, IgniteLogger log) {
+    public GridNioRecoveryDescriptor(
+        boolean pairedConnections,
+        int queueLimit,
+        ClusterNode node,
+        IgniteLogger log
+    ) {
         assert !node.isLocal() : node;
         assert queueLimit > 0;
 
-        msgFuts = new ArrayDeque<>(queueLimit);
+        msgReqs = new ArrayDeque<>(queueLimit);
 
+        this.pairedConnections = pairedConnections;
         this.queueLimit = queueLimit;
         this.node = node;
         this.log = log;
+    }
+
+    /**
+     * @return {@code True} if in/out connections pair is used for communication with node.
+     */
+    public boolean pairedConnections() {
+        return pairedConnections;
     }
 
     /**
@@ -151,19 +183,19 @@ public class GridNioRecoveryDescriptor {
     }
 
     /**
-     * @param fut NIO future.
+     * @param req Write request.
      * @return {@code False} if queue limit is exceeded.
      */
-    public boolean add(GridNioFuture<?> fut) {
-        assert fut != null;
+    public boolean add(SessionWriteRequest req) {
+        assert req != null;
 
-        if (!fut.skipRecovery()) {
+        if (!req.skipRecovery()) {
             if (resendCnt == 0) {
-                msgFuts.addLast(fut);
+                msgReqs.addLast(req);
 
                 sentCnt++;
 
-                return msgFuts.size() < queueLimit;
+                return msgReqs.size() < queueLimit;
             }
             else
                 resendCnt--;
@@ -178,21 +210,19 @@ public class GridNioRecoveryDescriptor {
     public void ackReceived(long rcvCnt) {
         if (log.isDebugEnabled())
             log.debug("Handle acknowledgment [acked=" + acked + ", rcvCnt=" + rcvCnt +
-                ", msgFuts=" + msgFuts.size() + ']');
+                ", msgReqs=" + msgReqs.size() + ']');
 
         while (acked < rcvCnt) {
-            GridNioFuture<?> fut = msgFuts.pollFirst();
+            SessionWriteRequest req = msgReqs.pollFirst();
 
-            assert fut != null : "Missed message future [rcvCnt=" + rcvCnt +
+            assert req != null : "Missed message [rcvCnt=" + rcvCnt +
                 ", acked=" + acked +
                 ", desc=" + this + ']';
 
-            assert fut.isDone() : fut;
+            if (req.ackClosure() != null)
+                req.ackClosure().apply(null);
 
-            if (fut.ackClosure() != null)
-                fut.ackClosure().apply(null);
-
-            fut.onAckReceived();
+            req.onAckReceived();
 
             acked++;
         }
@@ -211,7 +241,7 @@ public class GridNioRecoveryDescriptor {
      * @return {@code False} if descriptor is reserved.
      */
     public boolean onNodeLeft() {
-        GridNioFuture<?>[] futs = null;
+        SessionWriteRequest[] reqs = null;
 
         synchronized (this) {
             nodeLeft = true;
@@ -219,45 +249,59 @@ public class GridNioRecoveryDescriptor {
             if (reserved)
                 return false;
 
-            if (!msgFuts.isEmpty()) {
-                futs = msgFuts.toArray(new GridNioFuture<?>[msgFuts.size()]);
+            if (!msgReqs.isEmpty()) {
+                reqs = msgReqs.toArray(new SessionWriteRequest[msgReqs.size()]);
 
-                msgFuts.clear();
+                msgReqs.clear();
             }
         }
 
-        if (futs != null)
-            completeOnNodeLeft(futs);
+        if (reqs != null)
+            notifyOnNodeLeft(reqs);
 
         return true;
     }
 
     /**
-     * @return Message futures for unacknowledged messages.
+     * @return Requests for unacknowledged messages.
      */
-    public Deque<GridNioFuture<?>> messagesFutures() {
-        return msgFuts;
+    public Deque<SessionWriteRequest> messagesRequests() {
+        return msgReqs;
     }
 
     /**
      * @param node Node.
-     * @return {@code True} if node is not null and has the same order as initial remtoe node.
+     * @return {@code True} if node is not null and has the same order as initial remote node.
      */
     public boolean nodeAlive(@Nullable ClusterNode node) {
         return node != null && node.order() == this.node.order();
     }
 
     /**
-     * @throws InterruptedException If interrupted.
      * @return {@code True} if reserved.
+     * @throws InterruptedException If interrupted.
      */
     public boolean reserve() throws InterruptedException {
         synchronized (this) {
-            while (!connected && reserved)
-                wait();
+            long t0 = System.nanoTime();
 
-            if (!connected)
+            while (!connected && reserved) {
+                wait(DESC_RESERVATION_TIMEOUT);
+
+                if ((System.nanoTime() - t0) / 1_000_000 >= DESC_RESERVATION_TIMEOUT - 100) {
+                    // Dumping a descriptor.
+                    log.error("Failed to wait for recovery descriptor reservation " +
+                        "[desc=" + this + ", ses=" + ses + ']');
+
+                    return false;
+                }
+            }
+
+            if (!connected) {
                 reserved = true;
+
+                reserveCnt++;
+            }
 
             return !connected;
         }
@@ -271,14 +315,14 @@ public class GridNioRecoveryDescriptor {
             if (!nodeLeft)
                 ackReceived(rcvCnt);
 
-            resendCnt = msgFuts.size();
+            resendCnt = msgReqs.size();
         }
     }
 
     /**
      *
      */
-    public void connected() {
+    public void onConnected() {
         synchronized (this) {
             assert reserved : this;
             assert !connected : this;
@@ -300,12 +344,41 @@ public class GridNioRecoveryDescriptor {
     }
 
     /**
+     * @return Connected flag.
+     */
+    public boolean connected() {
+        synchronized (this) {
+            return connected;
+        }
+    }
+
+    /**
+     * @return Reserved flag.
+     */
+    public boolean reserved() {
+        synchronized (this) {
+            return reserved;
+        }
+    }
+
+    /**
+     * @return Current handshake index.
+     */
+    public Long handshakeIndex() {
+        synchronized (this) {
+            return handshakeReq != null ? handshakeReq.get1() : null;
+        }
+    }
+
+    /**
      *
      */
     public void release() {
-        GridNioFuture<?>[] futs = null;
+        SessionWriteRequest[] futs = null;
 
         synchronized (this) {
+            ses = null;
+
             connected = false;
 
             if (handshakeReq != null) {
@@ -323,15 +396,15 @@ public class GridNioRecoveryDescriptor {
                 notifyAll();
             }
 
-            if (nodeLeft && !msgFuts.isEmpty()) {
-                futs = msgFuts.toArray(new GridNioFuture<?>[msgFuts.size()]);
+            if (nodeLeft && !msgReqs.isEmpty()) {
+                futs = msgReqs.toArray(new SessionWriteRequest[msgReqs.size()]);
 
-                msgFuts.clear();
+                msgReqs.clear();
             }
         }
 
         if (futs != null)
-            completeOnNodeLeft(futs);
+            notifyOnNodeLeft(futs);
     }
 
     /**
@@ -375,22 +448,52 @@ public class GridNioRecoveryDescriptor {
             else {
                 reserved = true;
 
+                reserveCnt++;
+
                 return true;
             }
         }
     }
 
     /**
-     * @param futs Futures to complete.
+     * @return Number of descriptor reservations.
      */
-    private void completeOnNodeLeft(GridNioFuture<?>[] futs) {
-        for (GridNioFuture<?> msg : futs) {
-            IOException e = new IOException("Failed to send message, node has left: " + node.id());
+    public int reserveCount() {
+        synchronized (this) {
+            return reserveCnt;
+        }
+    }
 
-            ((GridNioFutureImpl)msg).onDone(e);
+    /**
+     * @return Current session.
+     */
+    public synchronized GridNioSession session() {
+        return ses;
+    }
 
-            if (msg.ackClosure() != null)
-                msg.ackClosure().apply(new IgniteException(e));
+    /**
+     * @param ses Session.
+     */
+    public synchronized void session(GridNioSession ses) {
+        this.ses = ses;
+    }
+
+    /**
+     * @param reqs Requests to notify about error.
+     */
+    private void notifyOnNodeLeft(SessionWriteRequest[] reqs) {
+        IOException e = new IOException("Failed to send message, node has left: " + node.id());
+        IgniteException cloErr = null;
+
+        for (SessionWriteRequest req : reqs) {
+            req.onError(e);
+
+            if (req.ackClosure() != null) {
+                if (cloErr == null)
+                    cloErr = new IgniteException(e);
+
+                req.ackClosure().apply(cloErr);
+            }
         }
     }
 

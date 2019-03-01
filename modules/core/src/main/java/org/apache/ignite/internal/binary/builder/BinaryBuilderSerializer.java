@@ -19,6 +19,7 @@ package org.apache.ignite.internal.binary.builder;
 
 import java.util.Collection;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.internal.binary.BinaryMetadata;
@@ -26,6 +27,7 @@ import org.apache.ignite.internal.binary.BinaryObjectExImpl;
 import org.apache.ignite.internal.binary.BinaryUtils;
 import org.apache.ignite.internal.binary.BinaryWriterExImpl;
 import org.apache.ignite.internal.binary.GridBinaryMarshaller;
+import org.apache.ignite.internal.util.IgniteUtils;
 
 /**
  *
@@ -109,14 +111,25 @@ class BinaryBuilderSerializer {
             return;
         }
 
-        if (val.getClass().isEnum()) {
-            String clsName = val.getClass().getName();
+        if (IgniteUtils.isEnum(val.getClass())) {
+            String clsName = ((Enum)val).getDeclaringClass().getName();
 
             int typeId = writer.context().typeId(clsName);
             String typeName = writer.context().userTypeName(clsName);
 
-            BinaryMetadata meta = new BinaryMetadata(typeId, typeName, null, null, null, true);
-            writer.context().updateMetadata(typeId, meta);
+            Object[] enumVals = val.getClass().getEnumConstants();
+
+            Map<String, Integer> enumMap = new LinkedHashMap<>(enumVals.length);
+
+            for (Object enumVal : enumVals)
+                enumMap.put(((Enum)enumVal).name(), ((Enum)enumVal).ordinal());
+
+            BinaryMetadata meta = new BinaryMetadata(typeId, typeName, null, null, null, true, enumMap);
+
+            writer.context().updateMetadata(typeId, meta, writer.failIfUnregistered());
+
+            // Need register class for marshaller to be able to deserialize enum value.
+            writer.context().descriptorForClass(((Enum)val).getDeclaringClass(), false, false);
 
             writer.writeByte(GridBinaryMarshaller.ENUM);
             writer.writeInt(typeId);

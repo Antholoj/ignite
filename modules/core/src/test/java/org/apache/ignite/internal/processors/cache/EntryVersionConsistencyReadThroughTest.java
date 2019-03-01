@@ -38,11 +38,14 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.testframework.MvccFeatureChecker;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Assume;
+import org.junit.Test;
 
-import static org.apache.ignite.cache.CacheAtomicWriteOrderMode.PRIMARY;
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
+import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 
@@ -57,8 +60,8 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
     private boolean client;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setClientMode(client);
 
@@ -71,11 +74,10 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private CacheConfiguration<String, List<Double>> createCacheConfiguration(CacheAtomicityMode atomicityMode) {
-        CacheConfiguration<String, List<Double>> cc = new CacheConfiguration<>();
+        CacheConfiguration<String, List<Double>> cc = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
         cc.setCacheMode(PARTITIONED);
         cc.setAtomicityMode(atomicityMode);
-        cc.setAtomicWriteOrderMode(PRIMARY);
         cc.setWriteSynchronizationMode(FULL_SYNC);
 
         cc.setReadThrough(true);
@@ -101,16 +103,10 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
         startGrid(NODES_CNT - 1);
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-
-        super.afterTestsStopped();
-    }
-
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testInvokeAllTransactionalCache() throws Exception {
         check(false, createCacheConfiguration(TRANSACTIONAL));
     }
@@ -118,6 +114,18 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
     /**
      * @throws Exception If failed.
      */
+    @Test
+    public void testInvokeAllMvccTxCache() throws Exception {
+        Assume.assumeTrue("https://issues.apache.org/jira/browse/IGNITE-8582",
+            MvccFeatureChecker.isSupported(MvccFeatureChecker.Feature.CACHE_STORE));
+
+        check(false, createCacheConfiguration(TRANSACTIONAL_SNAPSHOT));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
     public void testInvokeAllAtomicCache() throws Exception {
         check(false, createCacheConfiguration(ATOMIC));
     }
@@ -125,6 +133,7 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testInvokeAtomicCache() throws Exception {
         check(true, createCacheConfiguration(ATOMIC));
     }
@@ -132,8 +141,20 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testInvokeTransactionalCache() throws Exception {
         check(true, createCacheConfiguration(TRANSACTIONAL));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testInvokeMvccTxCache() throws Exception {
+        Assume.assumeTrue("https://issues.apache.org/jira/browse/IGNITE-8582",
+            MvccFeatureChecker.isSupported(MvccFeatureChecker.Feature.CACHE_STORE));
+
+        check(true, createCacheConfiguration(TRANSACTIONAL_SNAPSHOT));
     }
 
     /**
@@ -160,7 +181,7 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
 
                 IgniteEx grid = grid(i);
 
-                final IgniteCache<String, Integer> cache = grid.cache(null);
+                final IgniteCache<String, Integer> cache = grid.cache(DEFAULT_CACHE_NAME);
 
                 if (single)
                     for (String key : keys)
@@ -170,7 +191,7 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
 
                 // Check entry versions consistency.
                 for (String key : keys) {
-                    Collection<ClusterNode> nodes = grid.affinity(null).mapKeyToPrimaryAndBackups(key);
+                    Collection<ClusterNode> nodes = grid.affinity(DEFAULT_CACHE_NAME).mapKeyToPrimaryAndBackups(key);
 
                     List<IgniteEx> grids = grids(nodes);
 
@@ -178,11 +199,13 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
                     Object val0 = null;
 
                     for (IgniteEx g : grids) {
-                        GridCacheAdapter<Object, Object> cx = g.context().cache().internalCache();
+                        GridCacheAdapter<Object, Object> cx = g.context().cache().internalCache(DEFAULT_CACHE_NAME);
 
-                        GridCacheEntryEx e = cx.peekEx(key);
+                        GridCacheEntryEx e = cx.entryEx(key);
 
-                        assertNotNull("Failed to find entry on primary/backup node.", e);
+                        e.unswap();
+
+                        assertNotNull("Failed to find entry on primary/backup node.", e.rawGet());
 
                         GridCacheVersion ver = e.version();
                         Object val = e.rawGet().value(cx.context().cacheObjectContext(), true);
@@ -201,7 +224,7 @@ public class EntryVersionConsistencyReadThroughTest extends GridCommonAbstractTe
             }
         }
         finally {
-            grid(0).destroyCache(null);
+            grid(0).destroyCache(DEFAULT_CACHE_NAME);
         }
     }
 

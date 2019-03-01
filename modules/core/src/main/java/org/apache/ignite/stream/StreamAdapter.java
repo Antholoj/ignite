@@ -46,7 +46,7 @@ public abstract class StreamAdapter<T, K, V> {
     private IgniteDataStreamer<K, V> stmr;
 
     /** Ignite. */
-    private Ignite ignite;
+    protected Ignite ignite;
 
     /**
      * Empty constructor.
@@ -179,8 +179,8 @@ public abstract class StreamAdapter<T, K, V> {
 
         } else {
             Map<K, V> m = multipleTupleExtractor.extract(msg);
-
-            if (m != null)
+            
+            if (m != null && !m.isEmpty())
                 stmr.addData(m);
 
         }

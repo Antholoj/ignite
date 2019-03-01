@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.Collections;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinderAbstractSelfTest;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.junit.Test;
 
 /**
  * GridTcpDiscoveryMulticastIpFinder test.
@@ -48,7 +49,8 @@ public class TcpDiscoveryMulticastIpFinderSelfTest
     /**
      * @throws Exception If failed.
      */
-    @SuppressWarnings({"TooBroadScope", "BusyWait"})
+    @SuppressWarnings({"TooBroadScope"})
+    @Test
     public void testExchange() throws Exception {
         String locAddr = null;
 
@@ -59,19 +61,19 @@ public class TcpDiscoveryMulticastIpFinderSelfTest
         try {
             ipFinder1 = ipFinder();
             ipFinder1.setResponseWaitTime(1000);
-            ipFinder1.setAddressRequestAttempts(10);
+            ipFinder1.setAddressRequestAttempts(5);
 
             ipFinder2 = new TcpDiscoveryMulticastIpFinder();
 
             ipFinder2.setResponseWaitTime(1000);
-            ipFinder2.setAddressRequestAttempts(10);
+            ipFinder2.setAddressRequestAttempts(5);
             ipFinder2.setMulticastGroup(ipFinder1.getMulticastGroup());
             ipFinder2.setMulticastPort(ipFinder1.getMulticastPort());
 
             ipFinder3 = new TcpDiscoveryMulticastIpFinder();
 
             ipFinder3.setResponseWaitTime(1000);
-            ipFinder3.setAddressRequestAttempts(10);
+            ipFinder3.setAddressRequestAttempts(5);
             ipFinder3.setMulticastGroup(ipFinder1.getMulticastGroup());
             ipFinder3.setMulticastPort(ipFinder1.getMulticastPort());
 

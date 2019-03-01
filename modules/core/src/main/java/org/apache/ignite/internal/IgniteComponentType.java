@@ -19,6 +19,7 @@ package org.apache.ignite.internal;
 
 import java.lang.reflect.Constructor;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.internal.processors.compress.CompressionProcessor;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.plugin.extensions.communication.MessageFactory;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +39,13 @@ public enum IgniteComponentType {
     HADOOP(
         "org.apache.ignite.internal.processors.hadoop.HadoopNoopProcessor",
         "org.apache.ignite.internal.processors.hadoop.HadoopProcessor",
+        "ignite-hadoop"
+    ),
+
+    /** Hadoop Helper component. */
+    HADOOP_HELPER(
+        "org.apache.ignite.internal.processors.hadoop.HadoopNoopHelper",
+        "org.apache.ignite.internal.processors.hadoop.HadoopHelperImpl",
         "ignite-hadoop"
     ),
 
@@ -82,6 +90,12 @@ public enum IgniteComponentType {
         "org.apache.ignite.internal.processors.schedule.IgniteNoopScheduleProcessor",
         "org.apache.ignite.internal.processors.schedule.IgniteScheduleProcessor",
         "ignite-schedule"
+    ),
+
+    COMPRESSION(
+        CompressionProcessor.class.getName(),
+        "org.apache.ignite.internal.processors.compress.CompressionProcessorImpl",
+        "ignite-compress"
     );
 
     /** No-op class name. */
@@ -160,7 +174,7 @@ public enum IgniteComponentType {
      * @return Created component.
      * @throws IgniteCheckedException If failed.
      */
-    public <T extends GridComponent> T create(GridKernalContext ctx, boolean noOp) throws IgniteCheckedException {
+    public <T> T create(GridKernalContext ctx, boolean noOp) throws IgniteCheckedException {
         return create0(ctx, noOp ? noOpClsName : clsName);
     }
 
@@ -172,7 +186,7 @@ public enum IgniteComponentType {
      * @return Created component.
      * @throws IgniteCheckedException If failed.
      */
-    public <T extends GridComponent> T createIfInClassPath(GridKernalContext ctx, boolean mandatory)
+    public <T> T createIfInClassPath(GridKernalContext ctx, boolean mandatory)
         throws IgniteCheckedException {
         String cls = clsName;
 
@@ -228,7 +242,6 @@ public enum IgniteComponentType {
      * @return Created component or no-op implementation.
      * @throws IgniteCheckedException If failed.
      */
-    @SuppressWarnings("unchecked")
     private <T> T createOptional0(@Nullable GridKernalContext ctx) throws IgniteCheckedException {
         Class<?> cls;
 
@@ -269,7 +282,6 @@ public enum IgniteComponentType {
      * @return Component instance.
      * @throws IgniteCheckedException If failed.
      */
-    @SuppressWarnings("unchecked")
     private <T> T create0(@Nullable GridKernalContext ctx, String clsName) throws IgniteCheckedException {
         try {
             Class<?> cls = Class.forName(clsName);

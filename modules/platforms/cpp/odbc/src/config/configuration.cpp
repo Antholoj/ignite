@@ -15,15 +15,14 @@
  * limitations under the License.
  */
 
-#include <cstring>
-
 #include <string>
 #include <sstream>
-#include <algorithm>
 #include <iterator>
 
 #include "ignite/odbc/utility.h"
 #include "ignite/odbc/config/configuration.h"
+#include "ignite/odbc/config/connection_string_parser.h"
+#include "ignite/odbc/config/config_tools.h"
 
 namespace ignite
 {
@@ -31,48 +30,56 @@ namespace ignite
     {
         namespace config
         {
-            /** Default values for configuration. */
-            namespace dflt
-            {
-                /** Default value for DSN attribute. */
-                const std::string dsn = "Default Apache Ignite DSN";
+            const std::string Configuration::DefaultValue::dsn = "Apache Ignite DSN";
+            const std::string Configuration::DefaultValue::driver = "Apache Ignite";
+            const std::string Configuration::DefaultValue::schema = "PUBLIC";
+            const std::string Configuration::DefaultValue::address = "";
+            const std::string Configuration::DefaultValue::server = "";
 
-                /** Default value for Driver attribute. */
-                const std::string driver = "Apache Ignite";
+            const uint16_t Configuration::DefaultValue::port = 10800;
+            const int32_t Configuration::DefaultValue::pageSize = 1024;
 
-                /** Default value for host attribute. */
-                const std::string host = "localhost";
+            const bool Configuration::DefaultValue::distributedJoins = false;
+            const bool Configuration::DefaultValue::enforceJoinOrder = false;
+            const bool Configuration::DefaultValue::replicatedOnly = false;
+            const bool Configuration::DefaultValue::collocated = false;
+            const bool Configuration::DefaultValue::lazy = false;
+            const bool Configuration::DefaultValue::skipReducerOnUpdate = false;
 
-                /** Default value for port attribute. */
-                const uint16_t port = 10800;
+            const ProtocolVersion& Configuration::DefaultValue::protocolVersion = ProtocolVersion::GetCurrent();
 
-                /** Default value for cache attribute. */
-                const std::string cache = "";
-            }
+            const ssl::SslMode::Type Configuration::DefaultValue::sslMode = ssl::SslMode::DISABLE;
+            const std::string Configuration::DefaultValue::sslKeyFile = "";
+            const std::string Configuration::DefaultValue::sslCertFile = "";
+            const std::string Configuration::DefaultValue::sslCaFile = "";
 
-            /** Connection attribute keywords. */
-            namespace attrkey
-            {
-                /** Connection attribute keyword for DSN attribute. */
-                const std::string dsn = "dsn";
-            
-                /** Connection attribute keyword for Driver attribute. */
-                const std::string driver = "driver";
+            const std::string Configuration::DefaultValue::user = "";
+            const std::string Configuration::DefaultValue::password = "";
 
-                /** Connection attribute keyword for server host attribute. */
-                const std::string host = "server";
-
-                /** Connection attribute keyword for server port attribute. */
-                const std::string port = "port";
-
-                /** Connection attribute keyword for cache attribute. */
-                const std::string cache = "cache";
-            }
+            const NestedTxMode::Type Configuration::DefaultValue::nestedTxMode = NestedTxMode::AI_ERROR;
 
             Configuration::Configuration() :
-                dsn(dflt::dsn), driver(dflt::driver),
-                host(dflt::host), port(dflt::port),
-                cache(dflt::cache)
+                dsn(DefaultValue::dsn),
+                driver(DefaultValue::driver),
+                schema(DefaultValue::schema),
+                server(DefaultValue::server),
+                port(DefaultValue::port),
+                pageSize(DefaultValue::pageSize),
+                distributedJoins(DefaultValue::distributedJoins),
+                enforceJoinOrder(DefaultValue::enforceJoinOrder),
+                replicatedOnly(DefaultValue::replicatedOnly),
+                collocated(DefaultValue::collocated),
+                lazy(DefaultValue::lazy),
+                skipReducerOnUpdate(DefaultValue::skipReducerOnUpdate),
+                protocolVersion(DefaultValue::protocolVersion),
+                endPoints(std::vector<EndPoint>()),
+                sslMode(DefaultValue::sslMode),
+                sslKeyFile(DefaultValue::sslKeyFile),
+                sslCertFile(DefaultValue::sslCertFile),
+                sslCaFile(DefaultValue::sslCaFile),
+                user(DefaultValue::user),
+                password(DefaultValue::password),
+                nestedTxMode(DefaultValue::nestedTxMode)
             {
                 // No-op.
             }
@@ -82,168 +89,429 @@ namespace ignite
                 // No-op.
             }
 
-            void Configuration::FillFromConnectString(const char* str, size_t len)
-            {
-                ArgumentMap connect_attributes;
-
-                // Ignoring terminating zero byte if present.
-                // Some Driver Managers pass zero-terminated connection string
-                // while others don't.
-                if (len && !str[len - 1])
-                    --len;
-
-                ParseAttributeList(str, len, ';', connect_attributes);
-
-                ArgumentMap::const_iterator it;
-
-                it = connect_attributes.find(attrkey::dsn);
-                if (it != connect_attributes.end())
-                    dsn = it->second;
-                else
-                    dsn.clear();
-
-                it = connect_attributes.find(attrkey::driver);
-                if (it != connect_attributes.end())
-                    driver = it->second;
-                else
-                    driver = dflt::driver;
-
-                it = connect_attributes.find(attrkey::host);
-                if (it != connect_attributes.end())
-                    host = it->second;
-                else
-                    host = dflt::host;
-
-                it = connect_attributes.find(attrkey::port);
-                if (it != connect_attributes.end())
-                    port = atoi(it->second.c_str());
-                else
-                    port = dflt::port;
-
-                it = connect_attributes.find(attrkey::cache);
-                if (it != connect_attributes.end())
-                    cache = it->second;
-                else
-                    cache = dflt::cache;
-            }
-
-            void Configuration::FillFromConnectString(const std::string& str)
-            {
-                FillFromConnectString(str.data(), str.size());
-            }
-
             std::string Configuration::ToConnectString() const
             {
+                ArgumentMap arguments;
+
+                ToMap(arguments);
+
                 std::stringstream connect_string_buffer;
 
-                if (!driver.empty())
-                    connect_string_buffer << attrkey::driver << "={" << driver << "};";
+                for (ArgumentMap::const_iterator it = arguments.begin(); it != arguments.end(); ++it)
+                {
+                    const std::string& key = it->first;
+                    const std::string& value = it->second;
 
-                if (!host.empty())
-                    connect_string_buffer << attrkey::host << '=' << host << ';';
+                    if (value.empty())
+                        continue;
 
-                if (port)
-                    connect_string_buffer << attrkey::port << '=' << port << ';';
-
-                if (!dsn.empty())
-                    connect_string_buffer << attrkey::dsn << '=' << dsn << ';';
-
-                if (!cache.empty())
-                    connect_string_buffer << attrkey::cache << '=' << cache << ';';
+                    if (value.find(' ') == std::string::npos)
+                        connect_string_buffer << key << '=' << value << ';';
+                    else
+                        connect_string_buffer << key << "={" << value << "};";
+                }
 
                 return connect_string_buffer.str();
             }
 
-            void Configuration::FillFromConfigAttributes(const char * attributes)
+            uint16_t Configuration::GetTcpPort() const
             {
-                ArgumentMap config_attributes;
-
-                size_t len = 0;
-
-                // Getting list length. List is terminated by two '\0'.
-                while (attributes[len] || attributes[len + 1])
-                    ++len;
-
-                ++len;
-
-                ParseAttributeList(attributes, len, '\0', config_attributes);
-
-                ArgumentMap::const_iterator it;
-
-                it = config_attributes.find(attrkey::dsn);
-                if (it != config_attributes.end())
-                    dsn = it->second;
-                else
-                    dsn = dflt::dsn;
-
-                it = config_attributes.find(attrkey::driver);
-                if (it != config_attributes.end())
-                    driver = it->second;
-                else
-                    driver.clear();
-
-                it = config_attributes.find(attrkey::host);
-                if (it != config_attributes.end())
-                    host = it->second;
-                else
-                    host.clear();
-
-                it = config_attributes.find(attrkey::port);
-                if (it != config_attributes.end())
-                    port = atoi(it->second.c_str());
-                else
-                    port = 0;
-
-                it = config_attributes.find(attrkey::cache);
-                if (it != config_attributes.end())
-                    cache = it->second;
-                else
-                    cache.clear();
+                return port.GetValue();
             }
 
-            void Configuration::ParseAttributeList(const char * str, size_t len, char delimeter, ArgumentMap & args) const
+            void Configuration::SetTcpPort(uint16_t port)
             {
-                std::string connect_str(str, len);
-                args.clear();
+                this->port.SetValue(port);
+            }
 
-                while (!connect_str.empty())
-                {
-                    size_t attr_begin = connect_str.rfind(delimeter);
+            bool Configuration::IsTcpPortSet() const
+            {
+                return port.IsSet();
+            }
 
-                    if (attr_begin == std::string::npos)
-                        attr_begin = 0;
-                    else
-                        ++attr_begin;
+            const std::string& Configuration::GetDsn(const std::string& dflt) const
+            {
+                if (!dsn.IsSet())
+                    return dflt;
 
-                    size_t attr_eq_pos = connect_str.rfind('=');
+                return dsn.GetValue();
+            }
 
-                    if (attr_eq_pos == std::string::npos)
-                        attr_eq_pos = 0;
+            bool Configuration::IsDsnSet() const
+            {
+                return dsn.IsSet();
+            }
 
-                    if (attr_begin < attr_eq_pos)
-                    {
-                        const char* key_begin = connect_str.data() + attr_begin;
-                        const char* key_end = connect_str.data() + attr_eq_pos;
+            void Configuration::SetDsn(const std::string& dsn)
+            {
+                this->dsn.SetValue(dsn);
+            }
 
-                        const char* value_begin = connect_str.data() + attr_eq_pos + 1;
-                        const char* value_end = connect_str.data() + connect_str.size();
+            const std::string& Configuration::GetDriver() const
+            {
+                return driver.GetValue();
+            }
 
-                        std::string key = utility::RemoveSurroundingSpaces(key_begin, key_end);
-                        std::string value = utility::RemoveSurroundingSpaces(value_begin, value_end);
+            void Configuration::SetDriver(const std::string& driver)
+            {
+                this->driver.SetValue(driver);
+            }
 
-                        utility::IntoLower(key);
+            const std::string& Configuration::GetHost() const
+            {
+                return server.GetValue();
+            }
 
-                        if (value.front() == '{' && value.back() == '}')
-                            value = value.substr(1, value.size() - 2);
+            void Configuration::SetHost(const std::string& server)
+            {
+                this->server.SetValue(server);
+            }
 
-                        args[key] = value;
-                    }
+            bool Configuration::IsHostSet() const
+            {
+                return server.IsSet();
+            }
 
-                    if (!attr_begin)
-                        break;
+            const std::string& Configuration::GetSchema() const
+            {
+                return schema.GetValue();
+            }
 
-                    connect_str.erase(attr_begin - 1);
-                }
+            void Configuration::SetSchema(const std::string& schema)
+            {
+                this->schema.SetValue(schema);
+            }
+
+            bool Configuration::IsSchemaSet() const
+            {
+                return schema.IsSet();
+            }
+
+            const std::vector<EndPoint>& Configuration::GetAddresses() const
+            {
+                return endPoints.GetValue();
+            }
+
+            void Configuration::SetAddresses(const std::vector<EndPoint>& endPoints)
+            {
+                this->endPoints.SetValue(endPoints);
+            }
+
+            bool Configuration::IsAddressesSet() const
+            {
+                return endPoints.IsSet();
+            }
+
+            ssl::SslMode::Type Configuration::GetSslMode() const
+            {
+                return sslMode.GetValue();
+            }
+
+            void Configuration::SetSslMode(ssl::SslMode::Type sslMode)
+            {
+                this->sslMode.SetValue(sslMode);
+            }
+
+            bool Configuration::IsSslModeSet() const
+            {
+                return sslMode.IsSet();
+            }
+
+            const std::string& Configuration::GetSslKeyFile() const
+            {
+                return sslKeyFile.GetValue();
+            }
+
+            void Configuration::SetSslKeyFile(const std::string& sslKeyFile)
+            {
+                this->sslKeyFile.SetValue(sslKeyFile);
+            }
+
+            bool Configuration::IsSslKeyFileSet() const
+            {
+                return sslKeyFile.IsSet();
+            }
+
+            const std::string& Configuration::GetSslCertFile() const
+            {
+                return sslCertFile.GetValue();
+            }
+
+            void Configuration::SetSslCertFile(const std::string& sslCertFile)
+            {
+                this->sslCertFile.SetValue(sslCertFile);
+            }
+
+            bool Configuration::IsSslCertFileSet() const
+            {
+                return sslCertFile.IsSet();
+            }
+
+            const std::string& Configuration::GetSslCaFile() const
+            {
+                return sslCaFile.GetValue();
+            }
+
+            void Configuration::SetSslCaFile(const std::string& sslCaFile)
+            {
+                this->sslCaFile.SetValue(sslCaFile);
+            }
+
+            bool Configuration::IsSslCaFileSet() const
+            {
+                return sslCaFile.IsSet();
+            }
+
+            bool Configuration::IsDistributedJoins() const
+            {
+                return distributedJoins.GetValue();
+            }
+
+            void Configuration::SetDistributedJoins(bool val)
+            {
+                this->distributedJoins.SetValue(val);
+            }
+
+            bool Configuration::IsDistributedJoinsSet() const
+            {
+                return distributedJoins.IsSet();
+            }
+
+            bool Configuration::IsEnforceJoinOrder() const
+            {
+                return enforceJoinOrder.GetValue();
+            }
+
+            void Configuration::SetEnforceJoinOrder(bool val)
+            {
+                this->enforceJoinOrder.SetValue(val);
+            }
+
+            bool Configuration::IsEnforceJoinOrderSet() const
+            {
+                return enforceJoinOrder.IsSet();
+            }
+
+            bool Configuration::IsReplicatedOnly() const
+            {
+                return replicatedOnly.GetValue();
+            }
+
+            void Configuration::SetReplicatedOnly(bool val)
+            {
+                this->replicatedOnly.SetValue(val);
+            }
+
+            bool Configuration::IsReplicatedOnlySet() const
+            {
+                return replicatedOnly.IsSet();
+            }
+
+            bool Configuration::IsCollocated() const
+            {
+                return collocated.GetValue();
+            }
+
+            void Configuration::SetCollocated(bool val)
+            {
+                this->collocated.SetValue(val);
+            }
+
+            bool Configuration::IsCollocatedSet() const
+            {
+                return collocated.IsSet();
+            }
+
+            bool Configuration::IsLazy() const
+            {
+                return lazy.GetValue();
+            }
+
+            void Configuration::SetLazy(bool val)
+            {
+                this->lazy.SetValue(val);
+            }
+
+            bool Configuration::IsLazySet() const
+            {
+                return lazy.IsSet();
+            }
+
+            bool Configuration::IsSkipReducerOnUpdate() const
+            {
+                return skipReducerOnUpdate.GetValue();
+            }
+
+            void Configuration::SetSkipReducerOnUpdate(bool val)
+            {
+                this->skipReducerOnUpdate.SetValue(val);
+            }
+
+            bool Configuration::IsSkipReducerOnUpdateSet() const
+            {
+                return skipReducerOnUpdate.IsSet();
+            }
+
+            ProtocolVersion Configuration::GetProtocolVersion() const
+            {
+                return protocolVersion.GetValue();
+            }
+
+            void Configuration::SetProtocolVersion(const ProtocolVersion& version)
+            {
+                this->protocolVersion.SetValue(version);
+            }
+
+            bool Configuration::IsProtocolVersionSet() const
+            {
+                return protocolVersion.IsSet();
+            }
+
+            void Configuration::SetPageSize(int32_t size)
+            {
+                this->pageSize.SetValue(size);
+            }
+
+            bool Configuration::IsPageSizeSet() const
+            {
+                return pageSize.IsSet();
+            }
+
+            const std::string& Configuration::GetUser() const
+            {
+                return user.GetValue();
+            }
+
+            void Configuration::SetUser(const std::string& user)
+            {
+                this->user.SetValue(user);
+            }
+
+            bool Configuration::IsUserSet() const
+            {
+                return user.IsSet();
+            }
+
+            const std::string& Configuration::GetPassword() const
+            {
+                return password.GetValue();
+            }
+
+            void Configuration::SetPassword(const std::string& pass)
+            {
+                this->password.SetValue(pass);
+            }
+
+            bool Configuration::IsPasswordSet() const
+            {
+                return password.IsSet();
+            }
+
+            NestedTxMode::Type Configuration::GetNestedTxMode() const
+            {
+                return nestedTxMode.GetValue();
+            }
+
+            void Configuration::SetNestedTxMode(NestedTxMode::Type mode)
+            {
+                this->nestedTxMode.SetValue(mode);
+            }
+
+            bool Configuration::IsNestedTxModeSet() const
+            {
+                return nestedTxMode.IsSet();
+            }
+
+            int32_t Configuration::GetPageSize() const
+            {
+                return pageSize.GetValue();
+            }
+
+            void Configuration::ToMap(ArgumentMap& res) const
+            {
+                AddToMap(res, ConnectionStringParser::Key::dsn, dsn);
+                AddToMap(res, ConnectionStringParser::Key::driver, driver);
+                AddToMap(res, ConnectionStringParser::Key::schema, schema);
+                AddToMap(res, ConnectionStringParser::Key::address, endPoints);
+                AddToMap(res, ConnectionStringParser::Key::server, server);
+                AddToMap(res, ConnectionStringParser::Key::port, port);
+                AddToMap(res, ConnectionStringParser::Key::distributedJoins, distributedJoins);
+                AddToMap(res, ConnectionStringParser::Key::enforceJoinOrder, enforceJoinOrder);
+                AddToMap(res, ConnectionStringParser::Key::protocolVersion, protocolVersion);
+                AddToMap(res, ConnectionStringParser::Key::pageSize, pageSize);
+                AddToMap(res, ConnectionStringParser::Key::replicatedOnly, replicatedOnly);
+                AddToMap(res, ConnectionStringParser::Key::collocated, collocated);
+                AddToMap(res, ConnectionStringParser::Key::lazy, lazy);
+                AddToMap(res, ConnectionStringParser::Key::skipReducerOnUpdate, skipReducerOnUpdate);
+                AddToMap(res, ConnectionStringParser::Key::sslMode, sslMode);
+                AddToMap(res, ConnectionStringParser::Key::sslKeyFile, sslKeyFile);
+                AddToMap(res, ConnectionStringParser::Key::sslCertFile, sslCertFile);
+                AddToMap(res, ConnectionStringParser::Key::sslCaFile, sslCaFile);
+                AddToMap(res, ConnectionStringParser::Key::user, user);
+                AddToMap(res, ConnectionStringParser::Key::password, password);
+                AddToMap(res, ConnectionStringParser::Key::nestedTxMode, nestedTxMode);
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key, const SettableValue<uint16_t>& value)
+            {
+                if (value.IsSet())
+                    map[key] = common::LexicalCast<std::string>(value.GetValue());
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key, const SettableValue<int32_t>& value)
+            {
+                if (value.IsSet())
+                    map[key] = common::LexicalCast<std::string>(value.GetValue());
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key,
+                const SettableValue<std::string>& value)
+            {
+                if (value.IsSet())
+                    map[key] = value.GetValue();
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key,
+                const SettableValue<bool>& value)
+            {
+                if (value.IsSet())
+                    map[key] = value.GetValue() ? "true" : "false";
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key,
+                const SettableValue<ProtocolVersion>& value)
+            {
+                if (value.IsSet())
+                    map[key] = value.GetValue().ToString();
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key,
+                const SettableValue< std::vector<EndPoint> >& value)
+            {
+                if (value.IsSet())
+                    map[key] = AddressesToString(value.GetValue());
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key,
+                const SettableValue<ssl::SslMode::Type>& value)
+            {
+                if (value.IsSet())
+                    map[key] = ssl::SslMode::ToString(value.GetValue());
+            }
+
+            template<>
+            void Configuration::AddToMap(ArgumentMap& map, const std::string& key,
+                const SettableValue<NestedTxMode::Type>& value)
+            {
+                if (value.IsSet())
+                    map[key] = NestedTxMode::ToString(value.GetValue());
             }
         }
     }

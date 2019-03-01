@@ -29,6 +29,7 @@ import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_MAX_COMPLETED_TX_COUNT;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
@@ -43,7 +44,7 @@ public class GridCacheMissingCommitVersionSelfTest extends GridCommonAbstractTes
     private volatile boolean putFailed;
 
     /** */
-    private String maxCompletedTxCount;
+    private String maxCompletedTxCnt;
 
     /**
      */
@@ -53,7 +54,7 @@ public class GridCacheMissingCommitVersionSelfTest extends GridCommonAbstractTes
 
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration() throws Exception {
-        maxCompletedTxCount = System.getProperty(IGNITE_MAX_COMPLETED_TX_COUNT);
+        maxCompletedTxCnt = System.getProperty(IGNITE_MAX_COMPLETED_TX_COUNT);
 
         System.setProperty(IGNITE_MAX_COMPLETED_TX_COUNT, String.valueOf(5));
 
@@ -65,7 +66,7 @@ public class GridCacheMissingCommitVersionSelfTest extends GridCommonAbstractTes
 
         cfg.setDiscoverySpi(discoSpi);
 
-        CacheConfiguration ccfg = new CacheConfiguration();
+        CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         ccfg.setCacheMode(PARTITIONED);
         ccfg.setAtomicityMode(TRANSACTIONAL);
@@ -78,7 +79,7 @@ public class GridCacheMissingCommitVersionSelfTest extends GridCommonAbstractTes
 
     /** {@inheritDoc} */
     @Override protected void afterTest() throws Exception {
-        System.setProperty(IGNITE_MAX_COMPLETED_TX_COUNT, maxCompletedTxCount != null ? maxCompletedTxCount : "");
+        System.setProperty(IGNITE_MAX_COMPLETED_TX_COUNT, maxCompletedTxCnt != null ? maxCompletedTxCnt : "");
 
         super.afterTest();
     }
@@ -86,6 +87,7 @@ public class GridCacheMissingCommitVersionSelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMissingCommitVersion() throws Exception {
         final IgniteCache<Integer, Integer> cache = jcache();
 
@@ -123,11 +125,7 @@ public class GridCacheMissingCommitVersionSelfTest extends GridCommonAbstractTes
         for (Integer key : q) {
             log.info("Trying to update " + key);
 
-            IgniteCache<Integer, Integer> asyncCache = cache.withAsync();
-
-            asyncCache.put(key, 2);
-
-            IgniteFuture<?> fut = asyncCache.future();
+            IgniteFuture<?> fut = cache.putAsync(key, 2);
 
             try {
                 fut.get(5000);

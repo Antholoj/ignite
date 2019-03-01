@@ -27,16 +27,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.affinity.AffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
-import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionConcurrency;
@@ -57,27 +52,11 @@ abstract class IgniteTxAbstractTest extends GridCommonAbstractTest {
     /** Execution count. */
     private static final AtomicInteger cntr = new AtomicInteger();
 
-    /** */
-    private static final TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
-
     /**
      * Start grid by default.
      */
     protected IgniteTxAbstractTest() {
         super(false /*start grid. */);
-    }
-
-    /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration c = super.getConfiguration(gridName);
-
-        TcpDiscoverySpi disco = new TcpDiscoverySpi();
-
-        disco.setIpFinder(ipFinder);
-
-        c.setDiscoverySpi(disco);
-
-        return c;
     }
 
     /**
@@ -116,19 +95,9 @@ abstract class IgniteTxAbstractTest extends GridCommonAbstractTest {
             info(msg);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
-        for (int i = 0; i < gridCount(); i++)
-            startGrid(i);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
+        startGridsMultiThreaded(gridCount());
     }
 
     /**
@@ -188,7 +157,7 @@ abstract class IgniteTxAbstractTest extends GridCommonAbstractTest {
                         int part = aff.partition(key);
 
                         debug("Key affinity [key=" + key + ", partition=" + part + ", affinity=" +
-                            U.toShortString(ignite(gridIdx).affinity(null).mapPartitionToPrimaryAndBackups(part)) + ']');
+                            U.toShortString(ignite(gridIdx).affinity(DEFAULT_CACHE_NAME).mapPartitionToPrimaryAndBackups(part)) + ']');
                     }
 
                     String val = Integer.toString(key);
@@ -254,7 +223,7 @@ abstract class IgniteTxAbstractTest extends GridCommonAbstractTest {
         if (printMemoryStats()) {
             if (cntr.getAndIncrement() % 100 == 0)
                 // Print transaction memory stats.
-                ((IgniteKernal)grid(gridIdx)).internalCache().context().tm().printMemoryStats();
+                ((IgniteKernal)grid(gridIdx)).internalCache(DEFAULT_CACHE_NAME).context().tm().printMemoryStats();
         }
     }
 
@@ -296,7 +265,7 @@ abstract class IgniteTxAbstractTest extends GridCommonAbstractTest {
                         int part = aff.partition(key);
 
                         debug("Key affinity [key=" + key + ", partition=" + part + ", affinity=" +
-                            U.toShortString(ignite(gridIdx).affinity(null).mapPartitionToPrimaryAndBackups(part)) + ']');
+                            U.toShortString(ignite(gridIdx).affinity(DEFAULT_CACHE_NAME).mapPartitionToPrimaryAndBackups(part)) + ']');
                     }
 
                     String val = Integer.toString(key);

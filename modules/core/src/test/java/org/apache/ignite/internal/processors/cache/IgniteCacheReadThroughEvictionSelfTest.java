@@ -17,10 +17,15 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.util.concurrent.TimeUnit;
+import javax.cache.configuration.Factory;
+import javax.cache.expiry.AccessedExpiryPolicy;
+import javax.cache.expiry.CreatedExpiryPolicy;
+import javax.cache.expiry.Duration;
+import javax.cache.expiry.ExpiryPolicy;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
-import org.apache.ignite.cache.CacheMemoryMode;
 import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.cache.eviction.fifo.FifoEvictionPolicy;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -29,14 +34,9 @@ import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.PA;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.MvccFeatureChecker;
 import org.apache.ignite.testframework.junits.IgniteCacheConfigVariationsAbstractTest;
-
-import javax.cache.configuration.Factory;
-import javax.cache.expiry.AccessedExpiryPolicy;
-import javax.cache.expiry.CreatedExpiryPolicy;
-import javax.cache.expiry.Duration;
-import javax.cache.expiry.ExpiryPolicy;
-import java.util.concurrent.TimeUnit;
+import org.junit.Test;
 
 /**
  *
@@ -50,14 +50,24 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
     private static final int KEYS = 100;
 
     /** {@inheritDoc} */
+    @Override public void setUp() throws Exception {
+        MvccFeatureChecker.skipIfNotSupported(MvccFeatureChecker.Feature.CACHE_STORE);
+
+        super.setUp();
+    }
+
+    /** {@inheritDoc} */
     @Override protected void afterTest() throws Exception {
-        resetStore();
+        storeStgy.resetStore();
     }
 
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testReadThroughWithExpirePolicy() throws Exception {
+        MvccFeatureChecker.skipIfNotSupported(MvccFeatureChecker.Feature.EXPIRATION);
+
         Ignite ig = testedGrid();
 
         CacheConfiguration<Object, Object> cc = variationConfig("expire");
@@ -97,7 +107,10 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testReadThroughExpirePolicyConfigured() throws Exception {
+        MvccFeatureChecker.skipIfNotSupported(MvccFeatureChecker.Feature.EXPIRATION);
+
         Ignite ig = testedGrid();
 
         CacheConfiguration<Object, Object> cc = variationConfig("expireConfig");
@@ -150,15 +163,16 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testReadThroughEvictionPolicy() throws Exception {
+        MvccFeatureChecker.skipIfNotSupported(MvccFeatureChecker.Feature.EVICTION);
+
         Ignite ig = testedGrid();
 
         CacheConfiguration<Object, Object> cc = variationConfig("eviction");
 
         cc.setEvictionPolicy(new FifoEvictionPolicy(1));
-
-        if (cc.getMemoryMode() == CacheMemoryMode.OFFHEAP_TIERED)
-            cc.setOffHeapMaxMemory(2 * 1024);
+        cc.setOnheapCacheEnabled(true);
 
         final IgniteCache<Object, Object> cache = ig.createCache(cc);
 
@@ -173,9 +187,9 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
 
                     System.out.println("Cache [onHeap=" + size + ", offHeap=" + offheapSize + ']');
 
-                    return size <= testsCfg.gridCount() && offheapSize < KEYS;
+                    return size <= testsCfg.gridCount();
                 }
-            }, getTestTimeout()));
+            }, 30_000));
 
             for (int i = 0; i < KEYS; i++)
                 assertEquals(value(i), cache.get(key(i)));
@@ -188,6 +202,7 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
     /**
      * @throws Exception if failed.
      */
+    @Test
     public void testReadThroughSkipStore() throws Exception {
         Ignite ig = testedGrid();
 
@@ -216,7 +231,7 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
      * @return Variation test configuration.
      */
     private CacheConfiguration<Object, Object> variationConfig(String suffix) {
-        CacheConfiguration ccfg = testsCfg.configurationFactory().cacheConfiguration(getTestGridName(testedNodeIdx));
+        CacheConfiguration ccfg = testsCfg.configurationFactory().cacheConfiguration(getTestIgniteInstanceName(testedNodeIdx));
 
         ccfg.setName(cacheName() + "_" + suffix);
 
@@ -236,9 +251,6 @@ public class IgniteCacheReadThroughEvictionSelfTest extends IgniteCacheConfigVar
                         return true;
 
                     if (!cache.isEmpty())
-                        return false;
-
-                    if (cache.context().offheap().entriesCount(null) > 0)
                         return false;
                 }
 

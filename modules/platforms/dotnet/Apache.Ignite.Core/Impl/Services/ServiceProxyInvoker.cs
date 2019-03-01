@@ -32,8 +32,8 @@ namespace Apache.Ignite.Core.Impl.Services
     internal static class ServiceProxyInvoker
     {
         /** Cached method info. */
-        private static readonly CopyOnWriteConcurrentDictionary<Tuple<Type, string, int>, MethodInfo> Methods =
-            new CopyOnWriteConcurrentDictionary<Tuple<Type, string, int>, MethodInfo>();
+        private static readonly CopyOnWriteConcurrentDictionary<Tuple<Type, string, int>, Func<object, object[], object>> Methods =
+            new CopyOnWriteConcurrentDictionary<Tuple<Type, string, int>, Func<object, object[], object>>();
 
         /// <summary>
         /// Invokes the service method according to data from a stream,
@@ -69,48 +69,50 @@ namespace Apache.Ignite.Core.Impl.Services
         /// <summary>
         /// Finds suitable method in the specified type, or throws an exception.
         /// </summary>
-        private static MethodBase GetMethodOrThrow(Type svcType, string methodName, object[] arguments)
+        private static Func<object, object[], object> GetMethodOrThrow(Type svcType, string methodName,
+            object[] arguments)
         {
             Debug.Assert(svcType != null);
             Debug.Assert(!string.IsNullOrWhiteSpace(methodName));
+            
+            var argsLength = arguments == null ? 0 : arguments.Length;
 
             // 0) Check cached methods
-            var cacheKey = Tuple.Create(svcType, methodName, arguments.Length);
-            MethodInfo res;
+            var cacheKey = Tuple.Create(svcType, methodName, argsLength);
+            Func<object, object[], object> res;
 
             if (Methods.TryGetValue(cacheKey, out res))
                 return res;
 
             // 1) Find methods by name
             var methods = svcType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .Where(m => CleanupMethodName(m) == methodName && m.GetParameters().Length == arguments.Length)
+                .Where(m => CleanupMethodName(m) == methodName && m.GetParameters().Length == argsLength)
                 .ToArray();
 
             if (methods.Length == 1)
             {
                 // Update cache only when there is a single method with a given name and arg count.
-                Methods.GetOrAdd(cacheKey, x => methods[0]);
-
-                return methods[0];
+                return Methods.GetOrAdd(cacheKey, x => DelegateConverter.CompileFuncFromArray(methods[0]));
             }
 
             if (methods.Length == 0)
                 throw new InvalidOperationException(
                     string.Format(CultureInfo.InvariantCulture,
                         "Failed to invoke proxy: there is no method '{0}' in type '{1}' with {2} arguments", 
-                        methodName, svcType, arguments.Length));
+                        methodName, svcType, argsLength));
 
             // 2) There is more than 1 method with specified name - resolve with argument types.
             methods = methods.Where(m => AreMethodArgsCompatible(arguments, m.GetParameters())).ToArray();
 
             if (methods.Length == 1)
-                return methods[0];
+                return (obj, args) => methods[0].Invoke(obj, args);
 
             // 3) 0 or more than 1 matching method - throw.
-            var argsString = arguments.Length == 0
+            var argsString = argsLength == 0
                 ? "0"
                 : "(" +
                   // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                  // ReSharper disable once AssignNullToNotNullAttribute
                   arguments.Select(x => x == null ? "null" : x.GetType().Name).Aggregate((x, y) => x + ", " + y)
                   + ")";
 

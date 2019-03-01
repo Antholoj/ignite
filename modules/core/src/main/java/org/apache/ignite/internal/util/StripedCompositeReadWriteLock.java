@@ -17,15 +17,14 @@
 
 package org.apache.ignite.internal.util;
 
-import org.apache.ignite.thread.IgniteThread;
-import org.jetbrains.annotations.NotNull;
-
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import org.apache.ignite.thread.IgniteThread;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * ReadWriteLock with striping mechanics.
@@ -64,20 +63,34 @@ public class StripedCompositeReadWriteLock implements ReadWriteLock {
         writeLock = new WriteLock();
     }
 
-    /** {@inheritDoc} */
-    @NotNull @Override public Lock readLock() {
+    /**
+     * @return Index of current thread stripe.
+     */
+    private int curIdx() {
         int idx;
 
-        if (Thread.currentThread() instanceof IgniteThread) {
-            idx = ((IgniteThread)Thread.currentThread()).groupIndex();
+        Thread curThread = Thread.currentThread();
 
-            if (idx == IgniteThread.GRP_IDX_UNASSIGNED)
-                idx = IDX.get();
+        if (curThread instanceof IgniteThread) {
+            IgniteThread igniteThread = (IgniteThread)curThread;
+
+            idx = igniteThread.compositeRwLockIndex();
+
+            if (idx == IgniteThread.GRP_IDX_UNASSIGNED) {
+                idx = IDX_GEN.incrementAndGet();
+
+                igniteThread.compositeRwLockIndex(idx);
+            }
         }
         else
             idx = IDX.get();
 
-        return locks[idx % locks.length].readLock();
+        return idx % locks.length;
+    }
+
+    /** {@inheritDoc} */
+    @NotNull @Override public Lock readLock() {
+        return locks[curIdx()].readLock();
     }
 
     /** {@inheritDoc} */
@@ -93,6 +106,18 @@ public class StripedCompositeReadWriteLock implements ReadWriteLock {
      */
     public boolean isWriteLockedByCurrentThread() {
         return locks[locks.length - 1].isWriteLockedByCurrentThread();
+    }
+
+    /**
+     * Queries the number of reentrant read holds on this lock by the
+     * current thread.  A reader thread has a hold on a lock for
+     * each lock action that is not matched by an unlock action.
+     *
+     * @return the number of holds on the read lock by the current thread,
+     *         or zero if the read lock is not held by the current thread
+     */
+    public int getReadHoldCount() {
+        return locks[curIdx()].getReadHoldCount();
     }
 
     /**
@@ -135,7 +160,7 @@ public class StripedCompositeReadWriteLock implements ReadWriteLock {
          * Internal lock routine.
          *
          * @param canInterrupt Whether to acquire the lock interruptibly.
-         * @throws InterruptedException
+         * @throws InterruptedException If interrupted.
          */
         private void lock0(boolean canInterrupt) throws InterruptedException {
             int i = 0;
@@ -167,13 +192,40 @@ public class StripedCompositeReadWriteLock implements ReadWriteLock {
 
         /** {@inheritDoc} */
         @Override public boolean tryLock() {
-            throw new UnsupportedOperationException();
+            int i = 0;
+
+            try {
+                for (; i < locks.length; i++) {
+                    if (!locks[i].writeLock().tryLock())
+                        break;
+                }
+            }
+            finally {
+                if (0 < i && i < locks.length)
+                    unlock0(i - 1);
+            }
+
+            return i == locks.length;
         }
 
         /** {@inheritDoc} */
-        @SuppressWarnings("NullableProblems")
         @Override public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
-            throw new UnsupportedOperationException();
+            int i = 0;
+
+            long end = unit.toNanos(time) + System.nanoTime();
+
+            try {
+                for (; i < locks.length && System.nanoTime() < end; i++) {
+                    if (!locks[i].writeLock().tryLock(time, unit))
+                        break;
+                }
+            }
+            finally {
+                if (0 < i && i < locks.length)
+                    unlock0(i - 1);
+            }
+
+            return i == locks.length;
         }
 
         /** {@inheritDoc} */

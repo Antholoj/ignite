@@ -24,34 +24,39 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
-import junit.framework.TestCase;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.internal.U;
+import org.junit.Test;
 
 import static org.apache.ignite.internal.processors.cache.transactions.TxDeadlockDetection.findCycle;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.fail;
 
 /**
  * DFS test for search cycle in wait-for-graph.
  */
-public class DepthFirstSearchTest extends TestCase {
+public class DepthFirstSearchTest {
     /** Tx 1. */
-    private static final GridCacheVersion T1 = new GridCacheVersion(1, 0, 0, 0);
+    private static final GridCacheVersion T1 = new GridCacheVersion(1, 0, 0);
 
     /** Tx 2. */
-    private static final GridCacheVersion T2 = new GridCacheVersion(2, 0, 0, 0);
+    private static final GridCacheVersion T2 = new GridCacheVersion(2, 0, 0);
 
     /** Tx 3. */
-    private static final GridCacheVersion T3 = new GridCacheVersion(3, 0, 0, 0);
+    private static final GridCacheVersion T3 = new GridCacheVersion(3, 0, 0);
 
     /** Tx 4. */
-    private static final GridCacheVersion T4 = new GridCacheVersion(4, 0, 0, 0);
+    private static final GridCacheVersion T4 = new GridCacheVersion(4, 0, 0);
 
     /** Tx 5. */
-    private static final GridCacheVersion T5 = new GridCacheVersion(5, 0, 0, 0);
+    private static final GridCacheVersion T5 = new GridCacheVersion(5, 0, 0);
 
     /** Tx 6. */
-    private static final GridCacheVersion T6 = new GridCacheVersion(6, 0, 0, 0);
+    private static final GridCacheVersion T6 = new GridCacheVersion(6, 0, 0);
 
     /** All transactions. */
     private static final List<GridCacheVersion> ALL = Arrays.asList(T1, T2, T3, T4, T5, T6);
@@ -60,6 +65,7 @@ public class DepthFirstSearchTest extends TestCase {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testNoCycle() throws Exception {
         assertNull(findCycle(Collections.<GridCacheVersion, Set<GridCacheVersion>>emptyMap(), T1));
 
@@ -95,6 +101,14 @@ public class DepthFirstSearchTest extends TestCase {
 
         wfg = new HashMap<GridCacheVersion, Set<GridCacheVersion>>() {{
             put(T1, new HashSet<GridCacheVersion>(){{add(T2);}});
+            put(T2, new HashSet<GridCacheVersion>(){{add(T3);}});
+            put(T4, new HashSet<GridCacheVersion>(){{add(T1); add(T2); add(T3);}});
+        }};
+
+        assertAllNull(wfg);
+
+        wfg = new HashMap<GridCacheVersion, Set<GridCacheVersion>>() {{
+            put(T1, new HashSet<GridCacheVersion>(){{add(T2);}});
             put(T3, new HashSet<GridCacheVersion>(){{add(T4);}});
             put(T4, new HashSet<GridCacheVersion>(){{add(T1);}});
         }};
@@ -105,6 +119,7 @@ public class DepthFirstSearchTest extends TestCase {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFindCycle2() throws Exception {
         Map<GridCacheVersion, Set<GridCacheVersion>> wfg = new HashMap<GridCacheVersion, Set<GridCacheVersion>>() {{
             put(T1, Collections.singleton(T2));
@@ -170,6 +185,7 @@ public class DepthFirstSearchTest extends TestCase {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFindCycle3() throws Exception {
         Map<GridCacheVersion, Set<GridCacheVersion>> wfg = new HashMap<GridCacheVersion, Set<GridCacheVersion>>() {{
             put(T1, Collections.singleton(T2));
@@ -225,6 +241,96 @@ public class DepthFirstSearchTest extends TestCase {
         assertEquals(F.asList(T4, T6, T5, T4), findCycle(wfg, T5));
         assertEquals(F.asList(T5, T4, T6, T5), findCycle(wfg, T6));
 
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testFindCycle4() throws Exception {
+        Map<GridCacheVersion, Set<GridCacheVersion>> wfg = new HashMap<GridCacheVersion, Set<GridCacheVersion>>() {{
+            put(T1, Collections.singleton(T2));
+            put(T2, asLinkedHashSet(T3, T4));
+            put(T3, Collections.singleton(T4));
+            put(T4, Collections.singleton(T5));
+            put(T6, Collections.singleton(T3));
+        }};
+
+        assertNull(findCycle(wfg, T1));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testRandomNoExceptions() throws Exception {
+        int maxNodesCnt = 100;
+        int minNodesCnt = 10;
+        int maxWaitForNodesCnt = 20;
+
+        int cyclesFound = 0;
+        int cyclesNotFound = 0;
+
+        Random seedRnd = new Random();
+
+        Random rnd = new Random();
+
+        for (int i = 0; i < 50000; i++) {
+            long seed = seedRnd.nextLong();
+
+            rnd.setSeed(seed);
+
+            System.out.println(">>> Iteration " + i + " with seed " + seed);
+
+            int nodesCnt = rnd.nextInt(maxNodesCnt - minNodesCnt) + minNodesCnt;
+
+            Map<GridCacheVersion, Set<GridCacheVersion>> wfg = new HashMap<>();
+
+            for (int j = 0; j < nodesCnt; j++) {
+                if (rnd.nextInt(100) > 30) {
+                    int waitForNodesCnt = rnd.nextInt(maxWaitForNodesCnt);
+
+                    Set<GridCacheVersion> waitForNodes = null;
+
+                    if (waitForNodesCnt > 0) {
+                        waitForNodes = new LinkedHashSet<>();
+
+                        for (int k = 0; k < waitForNodesCnt;) {
+                            int n = rnd.nextInt(nodesCnt);
+
+                            if (n != j) {
+                                waitForNodes.add(new GridCacheVersion(n, 0, 0));
+                                k++;
+                            }
+                        }
+                    }
+
+                    wfg.put(new GridCacheVersion(j, 0, 0), waitForNodes);
+                }
+            }
+
+            for (int j = 0; j < nodesCnt; j++) {
+                try {
+                    List<GridCacheVersion> cycle = findCycle(wfg, new GridCacheVersion(j, 0, 0));
+
+                    if (cycle == null)
+                        cyclesNotFound++;
+                    else
+                        cyclesFound++;
+                }
+                catch (Throwable e) {
+                    U.error(null, "Error during finding cycle in graph: ", e);
+
+                    U.warn(null, "Seed: " + seed);
+
+                    U.warn(null, "Wait-for-graph: " + wfg);
+
+                    fail();
+                }
+            }
+        }
+
+        System.out.println(">>> Test finished. Cycles found: " + cyclesFound + ", cycles not found: " + cyclesNotFound);
     }
 
     /**

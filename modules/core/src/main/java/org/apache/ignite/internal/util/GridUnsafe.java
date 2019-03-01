@@ -18,11 +18,21 @@
 package org.apache.ignite.internal.util;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
+import org.apache.ignite.IgniteSystemProperties;
+import org.jetbrains.annotations.NotNull;
 import sun.misc.Unsafe;
+
+import static org.apache.ignite.internal.util.IgniteUtils.jdkVersion;
+import static org.apache.ignite.internal.util.IgniteUtils.majorJavaVersion;
 
 /**
  * <p>Wrapper for {@link sun.misc.Unsafe} class.</p>
@@ -43,11 +53,18 @@ import sun.misc.Unsafe;
  * </p>
  */
 public abstract class GridUnsafe {
+    /** */
+    public static final ByteOrder NATIVE_BYTE_ORDER = ByteOrder.nativeOrder();
+
     /** Unsafe. */
     private static final Unsafe UNSAFE = unsafe();
 
     /** Unaligned flag. */
     private static final boolean UNALIGNED = unaligned();
+
+    /** Per-byte copy threshold. */
+    private static final long PER_BYTE_THRESHOLD =
+        IgniteSystemProperties.getLong(IgniteSystemProperties.IGNITE_MEMORY_PER_BYTE_COPY_THRESHOLD, 0L);
 
     /** Big endian. */
     public static final boolean BIG_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
@@ -57,6 +74,9 @@ public abstract class GridUnsafe {
 
     /** */
     public static final long BYTE_ARR_OFF = UNSAFE.arrayBaseOffset(byte[].class);
+
+    /** */
+    public static final int BYTE_ARR_INT_OFF = UNSAFE.arrayBaseOffset(byte[].class);
 
     /** */
     public static final long SHORT_ARR_OFF = UNSAFE.arrayBaseOffset(short[].class);
@@ -79,11 +99,80 @@ public abstract class GridUnsafe {
     /** */
     public static final long BOOLEAN_ARR_OFF = UNSAFE.arrayBaseOffset(boolean[].class);
 
+    /** {@link java.nio.Buffer#address} field offset. */
+    private static final long DIRECT_BUF_ADDR_OFF = bufferAddressOffset();
+
+    /** Cleaner code for direct {@code java.nio.ByteBuffer}. */
+    private static final DirectBufferCleaner DIRECT_BUF_CLEANER =
+        majorJavaVersion(jdkVersion()) < 9
+            ? new ReflectiveDirectBufferCleaner()
+            : new UnsafeDirectBufferCleaner();
+
+    /** JavaNioAccess object. */
+    private static final Object JAVA_NIO_ACCESS_OBJ = javaNioAccessObject();
+
+    /** JavaNioAccess#newDirectByteBuffer method. */
+    private static final Method NEW_DIRECT_BUF_MTD = newDirectBufferMethod();
+
     /**
      * Ensure singleton.
      */
     private GridUnsafe() {
         // No-op.
+    }
+
+    /**
+     * @param ptr Pointer to wrap.
+     * @param len Memory location length.
+     * @return Byte buffer wrapping the given memory.
+     */
+    public static ByteBuffer wrapPointer(long ptr, int len) {
+        try {
+            ByteBuffer buf = (ByteBuffer)NEW_DIRECT_BUF_MTD.invoke(JAVA_NIO_ACCESS_OBJ, ptr, len, null);
+
+            assert buf.isDirect();
+
+            buf.order(NATIVE_BYTE_ORDER);
+
+            return buf;
+        }
+        catch (ReflectiveOperationException e) {
+            throw new RuntimeException("JavaNioAccess#newDirectByteBuffer() method is unavailable."
+                + FeatureChecker.JAVA_VER_SPECIFIC_WARN, e);
+        }
+    }
+
+    /**
+     * @param len Length.
+     * @return Allocated direct buffer.
+     */
+    public static ByteBuffer allocateBuffer(int len) {
+        long ptr = allocateMemory(len);
+
+        return wrapPointer(ptr, len);
+    }
+
+    /**
+     * @param buf Direct buffer allocated by {@link #allocateBuffer(int)}.
+     */
+    public static void freeBuffer(ByteBuffer buf) {
+        long ptr = bufferAddress(buf);
+
+        freeMemory(ptr);
+    }
+
+    /**
+     *
+     * @param buf Buffer.
+     * @param len New length.
+     * @return Reallocated direct buffer.
+     */
+    public static ByteBuffer reallocateBuffer(ByteBuffer buf, int len) {
+        long ptr = bufferAddress(buf);
+
+        long newPtr = reallocateMemory(ptr, len);
+
+        return wrapPointer(newPtr, len);
     }
 
     /**
@@ -1025,6 +1114,56 @@ public abstract class GridUnsafe {
     }
 
     /**
+     * Copy memory between offheap locations.
+     *
+     * @param srcAddr Source address.
+     * @param dstAddr Destination address.
+     * @param len Length.
+     */
+    public static void copyOffheapOffheap(long srcAddr, long dstAddr, long len) {
+        if (len <= PER_BYTE_THRESHOLD) {
+            for (int i = 0; i < len; i++)
+                UNSAFE.putByte(dstAddr + i, UNSAFE.getByte(srcAddr + i));
+        }
+        else
+            UNSAFE.copyMemory(srcAddr, dstAddr, len);
+    }
+
+    /**
+     * Copy memory from offheap to heap.
+     *
+     * @param srcAddr Source address.
+     * @param dstBase Destination base.
+     * @param dstOff Destination offset.
+     * @param len Length.
+     */
+    public static void copyOffheapHeap(long srcAddr, Object dstBase, long dstOff, long len) {
+        if (len <= PER_BYTE_THRESHOLD) {
+            for (int i = 0; i < len; i++)
+                UNSAFE.putByte(dstBase, dstOff + i, UNSAFE.getByte(srcAddr + i));
+        }
+        else
+            UNSAFE.copyMemory(null, srcAddr, dstBase, dstOff, len);
+    }
+
+    /**
+     * Copy memory from heap to offheap.
+     *
+     * @param srcBase Source base.
+     * @param srcOff Source offset.
+     * @param dstAddr Destination address.
+     * @param len Length.
+     */
+    public static void copyHeapOffheap(Object srcBase, long srcOff, long dstAddr, long len) {
+        if (len <= PER_BYTE_THRESHOLD) {
+            for (int i = 0; i < len; i++)
+                UNSAFE.putByte(dstAddr + i, UNSAFE.getByte(srcBase, srcOff + i));
+        }
+        else
+            UNSAFE.copyMemory(srcBase, srcOff, null, dstAddr, len);
+    }
+
+    /**
      * Copies memory.
      *
      * @param src Source.
@@ -1045,7 +1184,12 @@ public abstract class GridUnsafe {
      * @param len Length.
      */
     public static void copyMemory(Object srcBase, long srcOff, Object dstBase, long dstOff, long len) {
-        UNSAFE.copyMemory(srcBase, srcOff, dstBase, dstOff, len);
+        if (len <= PER_BYTE_THRESHOLD && srcBase != null && dstBase != null) {
+            for (int i = 0; i < len; i++)
+                UNSAFE.putByte(dstBase, dstOff + i, UNSAFE.getByte(srcBase, srcOff + i));
+        }
+        else
+            UNSAFE.copyMemory(srcBase, srcOff, dstBase, dstOff, len);
     }
 
     /**
@@ -1075,24 +1219,6 @@ public abstract class GridUnsafe {
      */
     public static Object allocateInstance(Class cls) throws InstantiationException {
         return UNSAFE.allocateInstance(cls);
-    }
-
-    /**
-     * Acquires monitor lock.
-     *
-     * @param obj Object.
-     */
-    public static void monitorEnter(Object obj) {
-        UNSAFE.monitorEnter(obj);
-    }
-
-    /**
-     * Releases monitor lock.
-     *
-     * @param obj Object.
-     */
-    public static void monitorExit(Object obj) {
-        UNSAFE.monitorExit(obj);
     }
 
     /**
@@ -1199,12 +1325,63 @@ public abstract class GridUnsafe {
     }
 
     /**
+     * Returns page size.
+     *
+     * @return Page size.
+     */
+    public static int pageSize() {
+        return UNSAFE.pageSize();
+    }
+
+    /**
+     * Returns address of {@link Buffer} instance.
+     *
+     * @param buf Buffer.
+     * @return Buffer memory address.
+     */
+    public static long bufferAddress(ByteBuffer buf) {
+        assert buf.isDirect();
+        return UNSAFE.getLong(buf, DIRECT_BUF_ADDR_OFF);
+    }
+
+    /**
+     * Invokes some method on {@code sun.misc.Unsafe} instance.
+     *
+     * @param mtd Method.
+     * @param args Arguments.
+     */
+    public static Object invoke(Method mtd, Object... args) {
+        try {
+            return mtd.invoke(UNSAFE, args);
+        }
+        catch (IllegalAccessException | InvocationTargetException e) {
+            throw new RuntimeException("Unsafe invocation failed [cls=" + UNSAFE.getClass() + ", mtd=" + mtd + ']', e);
+        }
+    }
+
+    /**
+     * Cleans direct {@code java.nio.ByteBuffer}
+     *
+     * @param buf Direct buffer.
+     */
+    public static void cleanDirectBuffer(ByteBuffer buf) {
+        assert buf.isDirect();
+
+        DIRECT_BUF_CLEANER.clean(buf);
+    }
+
+    /**
      * Returns unaligned flag.
      */
     private static boolean unaligned() {
         String arch = System.getProperty("os.arch");
 
-        return arch.equals("i386") || arch.equals("x86") || arch.equals("amd64") || arch.equals("x86_64");
+        boolean res = arch.equals("i386") || arch.equals("x86") || arch.equals("amd64") || arch.equals("x86_64");
+
+        if (!res)
+            res = IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_MEMORY_UNALIGNED_ACCESS, false);
+
+        return res;
     }
 
     /**
@@ -1231,6 +1408,84 @@ public abstract class GridUnsafe {
                 throw new RuntimeException("Could not initialize intrinsics.", e.getCause());
             }
         }
+    }
+
+    /** */
+    private static long bufferAddressOffset() {
+        final ByteBuffer maybeDirectBuf = ByteBuffer.allocateDirect(1);
+
+        Field addrField = AccessController.doPrivileged(new PrivilegedAction<Field>() {
+            @Override public Field run() {
+                try {
+                    Field addrFld = Buffer.class.getDeclaredField("address");
+
+                    addrFld.setAccessible(true);
+
+                    if (addrFld.getLong(maybeDirectBuf) == 0)
+                        throw new RuntimeException("java.nio.DirectByteBuffer.address field is unavailable.");
+
+                    return addrFld;
+                }
+                catch (Exception e) {
+                    throw new RuntimeException("java.nio.DirectByteBuffer.address field is unavailable.", e);
+                }
+            }
+        });
+
+        return UNSAFE.objectFieldOffset(addrField);
+    }
+
+    /**
+     * Returns {@code JavaNioAccess} instance from private API for corresponding Java version.
+     *
+     * @return {@code JavaNioAccess} instance for corresponding Java version.
+     * @throws RuntimeException If getting access to the private API is failed.
+     */
+    private static Object javaNioAccessObject() {
+        String pkgName = miscPackage();
+
+        try {
+            Class<?> cls = Class.forName(pkgName + ".misc.SharedSecrets");
+
+            Method mth = cls.getMethod("getJavaNioAccess");
+
+            return mth.invoke(null);
+        }
+        catch (ReflectiveOperationException e) {
+            throw new RuntimeException(pkgName + ".misc.JavaNioAccess class is unavailable."
+                + FeatureChecker.JAVA_VER_SPECIFIC_WARN, e);
+        }
+    }
+
+    /**
+     * Returns reference to {@code JavaNioAccess.newDirectByteBuffer} method
+     * from private API for corresponding Java version.
+     *
+     * @return Reference to {@code JavaNioAccess.newDirectByteBuffer} method
+     * @throws RuntimeException If getting access to the private API is failed.
+     */
+    private static Method newDirectBufferMethod() {
+
+        try {
+            Class<?> cls = JAVA_NIO_ACCESS_OBJ.getClass();
+
+            Method mtd = cls.getMethod("newDirectByteBuffer", long.class, int.class, Object.class);
+
+            mtd.setAccessible(true);
+
+            return mtd;
+        }
+        catch (ReflectiveOperationException e) {
+            throw new RuntimeException(miscPackage() + ".JavaNioAccess#newDirectByteBuffer() method is unavailable."
+                + FeatureChecker.JAVA_VER_SPECIFIC_WARN, e);
+        }
+    }
+
+    /** */
+    @NotNull private static String miscPackage() {
+        int javaVer = majorJavaVersion(jdkVersion());
+
+        return javaVer < 9 ? "sun" : "jdk.internal";
     }
 
     /**

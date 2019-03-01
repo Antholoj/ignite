@@ -21,12 +21,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
+import org.apache.ignite.internal.processors.cache.GridCacheMvccCandidate;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.testframework.junits.GridTestKernalContext;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.testframework.junits.logger.GridTestLog4jLogger;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Test;
 
 /**
  * Tests hashmap load.
@@ -36,6 +38,7 @@ public class GridHashMapLoadTest extends GridCommonAbstractTest {
     /**
      *
      */
+    @Test
     public void testHashMapLoad() {
         Map<Integer, Integer> map = new HashMap<>(5 * 1024 * 1024);
 
@@ -52,6 +55,7 @@ public class GridHashMapLoadTest extends GridCommonAbstractTest {
     /**
      *
      */
+    @Test
     public void testConcurrentHashMapLoad() {
         Map<Integer, Integer> map = new ConcurrentHashMap<>(5 * 1024 * 1024);
 
@@ -68,6 +72,7 @@ public class GridHashMapLoadTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMapEntry() throws Exception {
         Map<Integer, GridCacheMapEntry> map = new HashMap<>(5 * 1024 * 1024);
 
@@ -78,16 +83,18 @@ public class GridHashMapLoadTest extends GridCommonAbstractTest {
 
         while (true) {
             Integer key = i++;
-            Integer val = i++;
 
-            map.put(key, new GridCacheMapEntry(ctx, ctx.toCacheKeyObject(key),
-                key.hashCode(), ctx.toCacheObject(val)) {
+            map.put(key, new GridCacheMapEntry(ctx, ctx.toCacheKeyObject(key)) {
                 @Override public boolean tmLock(IgniteInternalTx tx,
                     long timeout,
                     @Nullable GridCacheVersion serOrder,
                     GridCacheVersion serReadVer,
-                    boolean keepBinary) {
+                    boolean read) {
                     return false;
+                }
+
+                @Override protected void checkThreadChain(GridCacheMvccCandidate owner) {
+                    // No-op.
                 }
 
                 @Override public void txUnlock(IgniteInternalTx tx) {

@@ -28,7 +28,6 @@ import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.MutableEntry;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
-import org.apache.ignite.Ignition;
 import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -42,11 +41,15 @@ import org.apache.ignite.spi.IgniteSpiException;
 import org.apache.ignite.spi.indexing.IndexingQueryFilter;
 import org.apache.ignite.spi.indexing.IndexingSpi;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.MvccFeatureChecker;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionConcurrency;
 import org.apache.ignite.transactions.TransactionHeuristicException;
 import org.apache.ignite.transactions.TransactionIsolation;
+import org.apache.ignite.transactions.TransactionRollbackException;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assume;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheMode.LOCAL;
 import static org.apache.ignite.cache.CacheMode.REPLICATED;
@@ -73,24 +76,22 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     }
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setIndexingSpi(new TestIndexingSpi());
-
-        cfg.getTransactionConfiguration().setTxSerializableEnabled(true);
 
         return cfg;
     }
 
     /** {@inheritDoc} */
-    @Override protected CacheConfiguration cacheConfiguration(String gridName) throws Exception {
-        CacheConfiguration ccfg = super.cacheConfiguration(gridName);
+    @Override protected CacheConfiguration cacheConfiguration(String igniteInstanceName) throws Exception {
+        CacheConfiguration ccfg = super.cacheConfiguration(igniteInstanceName);
 
         ccfg.setCacheStoreFactory(null);
         ccfg.setReadThrough(false);
         ccfg.setWriteThrough(false);
-        ccfg.setLoadPreviousValue(true);
+        ccfg.setLoadPreviousValue(false);
 
         ccfg.setIndexedTypes(Integer.class, Integer.class);
 
@@ -117,7 +118,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
         }
 
         for (int key = 0; key <= lastKey; key++)
-            grid(0).cache(null).remove(key);
+            grid(0).cache(DEFAULT_CACHE_NAME).remove(key);
 
         assertEquals(0, jcache(0).size(CachePeekMode.ALL));
     }
@@ -132,6 +133,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutNear() throws Exception {
         checkPut(true, keyForNode(grid(0).localNode(), NOT_PRIMARY_AND_BACKUP));
 
@@ -141,6 +143,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutPrimary() throws Exception {
         checkPut(true, keyForNode(grid(0).localNode(), PRIMARY));
 
@@ -150,6 +153,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutBackup() throws Exception {
         checkPut(true, keyForNode(grid(0).localNode(), BACKUP));
 
@@ -159,6 +163,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutAll() throws Exception {
         checkPutAll(true, keyForNode(grid(0).localNode(), PRIMARY),
             keyForNode(grid(0).localNode(), PRIMARY),
@@ -182,6 +187,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRemoveNear() throws Exception {
         checkRemove(false, keyForNode(grid(0).localNode(), NOT_PRIMARY_AND_BACKUP));
 
@@ -191,6 +197,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRemovePrimary() throws Exception {
         checkRemove(false, keyForNode(grid(0).localNode(), PRIMARY));
 
@@ -200,6 +207,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRemoveBackup() throws Exception {
         checkRemove(false, keyForNode(grid(0).localNode(), BACKUP));
 
@@ -209,6 +217,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTransformNear() throws Exception {
         checkTransform(false, keyForNode(grid(0).localNode(), NOT_PRIMARY_AND_BACKUP));
 
@@ -218,6 +227,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTransformPrimary() throws Exception {
         checkTransform(false, keyForNode(grid(0).localNode(), PRIMARY));
 
@@ -227,6 +237,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTransformBackup() throws Exception {
         checkTransform(false, keyForNode(grid(0).localNode(), BACKUP));
 
@@ -236,6 +247,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutNearTx() throws Exception {
         for (TransactionConcurrency concurrency : TransactionConcurrency.values()) {
             for (TransactionIsolation isolation : TransactionIsolation.values()) {
@@ -249,6 +261,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutPrimaryTx() throws Exception {
         for (TransactionConcurrency concurrency : TransactionConcurrency.values()) {
             for (TransactionIsolation isolation : TransactionIsolation.values()) {
@@ -262,6 +275,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutBackupTx() throws Exception {
         for (TransactionConcurrency concurrency : TransactionConcurrency.values()) {
             for (TransactionIsolation isolation : TransactionIsolation.values()) {
@@ -275,6 +289,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPutMultipleKeysTx() throws Exception {
         for (TransactionConcurrency concurrency : TransactionConcurrency.values()) {
             for (TransactionIsolation isolation : TransactionIsolation.values()) {
@@ -312,11 +327,17 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
      */
     private void checkPutTx(boolean putBefore, TransactionConcurrency concurrency,
         TransactionIsolation isolation, final Integer... keys) throws Exception {
+        Assume.assumeFalse("https://issues.apache.org/jira/browse/IGNITE-10871", MvccFeatureChecker.forcedMvcc());
+
+        if (MvccFeatureChecker.forcedMvcc() &&
+            !MvccFeatureChecker.isSupported(concurrency, isolation))
+            return;
+
         assertTrue(keys.length > 0);
 
         info("Test transaction [concurrency=" + concurrency + ", isolation=" + isolation + ']');
 
-        IgniteCache<Integer, Integer> cache = grid(0).cache(null);
+        IgniteCache<Integer, Integer> cache = grid(0).cache(DEFAULT_CACHE_NAME);
 
         if (putBefore) {
             TestIndexingSpi.forceFail(false);
@@ -339,7 +360,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
         // Execute get from all nodes to create readers for near cache.
         for (int i = 0; i < gridCount(); i++) {
             for (Integer key : keys)
-                grid(i).cache(null).get(key);
+                grid(i).cache(DEFAULT_CACHE_NAME).get(key);
         }
 
         TestIndexingSpi.forceFail(true);
@@ -361,6 +382,10 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
 
             fail("Transaction should fail.");
         }
+        catch (CacheException e){
+            if (!MvccFeatureChecker.forcedMvcc() || !(e.getCause() instanceof TransactionRollbackException))
+                throw e;
+        }
         catch (TransactionHeuristicException e) {
             log.info("Expected exception: " + e);
         }
@@ -369,14 +394,13 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
             checkUnlocked(key);
 
         for (int i = 0; i < gridCount(); i++)
-            assertEquals(0, ((IgniteKernal)ignite(0)).internalCache(null).context().tm().idMapSize());
+            assertEquals(0, ((IgniteKernal)ignite(0)).internalCache(DEFAULT_CACHE_NAME).context().tm().idMapSize());
     }
 
     /**
      * @param key Key.
      * @throws Exception If failed.
      */
-    @SuppressWarnings("unchecked")
     private void checkUnlocked(final Integer key) throws Exception {
         TestIndexingSpi.forceFail(false);
 
@@ -391,7 +415,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
                 @Override public boolean apply() {
                     IgniteKernal grid = (IgniteKernal)grid(idx);
 
-                    GridCacheAdapter cache = grid.internalCache(null);
+                    GridCacheAdapter cache = grid.internalCache(DEFAULT_CACHE_NAME);
 
                     GridCacheEntryEx entry = cache.peekEx(key);
 
@@ -450,24 +474,29 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
 
             info("Put key: " + key);
 
-            grid(0).cache(null).put(key, 1);
+            grid(0).cache(DEFAULT_CACHE_NAME).put(key, 1);
         }
 
         // Execute get from all nodes to create readers for near cache.
         for (int i = 0; i < gridCount(); i++)
-            grid(i).cache(null).get(key);
+            grid(i).cache(DEFAULT_CACHE_NAME).get(key);
 
         TestIndexingSpi.forceFail(true);
 
         info("Going to put: " + key);
 
-        GridTestUtils.assertThrows(log, new Callable<Void>() {
+        Throwable err = GridTestUtils.assertThrows(log, new Callable<Void>() {
             @Override public Void call() throws Exception {
-                grid(0).cache(null).put(key, 2);
+                grid(0).cache(DEFAULT_CACHE_NAME).put(key, 2);
 
                 return null;
             }
-        }, TransactionHeuristicException.class, null);
+        }, CacheException.class, null);
+
+        if (MvccFeatureChecker.forcedMvcc())
+            assertTrue(err.toString(), err.getCause() instanceof TransactionRollbackException); // Put operation fails.
+        else
+            assertTrue(err.toString(), err.getCause() instanceof TransactionHeuristicException); // Implicit tx commit fails.
 
         checkUnlocked(key);
     }
@@ -478,17 +507,19 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
      * @throws Exception If failed.
      */
     private void checkTransform(boolean putBefore, final Integer key) throws Exception {
+        Assume.assumeFalse("https://issues.apache.org/jira/browse/IGNITE-9470", MvccFeatureChecker.forcedMvcc());
+
         if (putBefore) {
             TestIndexingSpi.forceFail(false);
 
             info("Put key: " + key);
 
-            grid(0).cache(null).put(key, 1);
+            grid(0).cache(DEFAULT_CACHE_NAME).put(key, 1);
         }
 
         // Execute get from all nodes to create readers for near cache.
         for (int i = 0; i < gridCount(); i++)
-            grid(i).cache(null).get(key);
+            grid(i).cache(DEFAULT_CACHE_NAME).get(key);
 
         TestIndexingSpi.forceFail(true);
 
@@ -496,7 +527,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
 
         Throwable e = GridTestUtils.assertThrows(log, new Callable<Void>() {
             @Override public Void call() throws Exception {
-                grid(0).<Integer, Integer>cache(null).invoke(key, new EntryProcessor<Integer, Integer, Void>() {
+                grid(0).<Integer, Integer>cache(DEFAULT_CACHE_NAME).invoke(key, new EntryProcessor<Integer, Integer, Void>() {
                     @Override public Void process(MutableEntry<Integer, Integer> e, Object... args) {
                         e.setValue(2);
 
@@ -531,13 +562,13 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
 
             info("Put data: " + m);
 
-            grid(0).cache(null).putAll(m);
+            grid(0).cache(DEFAULT_CACHE_NAME).putAll(m);
         }
 
         // Execute get from all nodes to create readers for near cache.
         for (int i = 0; i < gridCount(); i++) {
             for (Integer key : keys)
-                grid(i).cache(null).get(key);
+                grid(i).cache(DEFAULT_CACHE_NAME).get(key);
         }
 
         TestIndexingSpi.forceFail(true);
@@ -549,13 +580,18 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
 
         info("Going to putAll: " + m);
 
-        GridTestUtils.assertThrows(log, new Callable<Void>() {
+        Throwable err = GridTestUtils.assertThrows(log, new Callable<Void>() {
             @Override public Void call() throws Exception {
-                grid(0).cache(null).putAll(m);
+                grid(0).cache(DEFAULT_CACHE_NAME).putAll(m);
 
                 return null;
             }
-        }, TransactionHeuristicException.class, null);
+        }, CacheException.class, null);
+
+        if (MvccFeatureChecker.forcedMvcc())
+            assertTrue(err.toString(), err.getCause() instanceof TransactionRollbackException); // Put operation fails.
+        else
+            assertTrue(err.toString(), err.getCause() instanceof TransactionHeuristicException); // Implicit tx commit fails.
 
         for (Integer key : m.keySet())
             checkUnlocked(key);
@@ -567,17 +603,19 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
      * @throws Exception If failed.
      */
     private void checkRemove(boolean putBefore, final Integer key) throws Exception {
+        Assume.assumeFalse("https://issues.apache.org/jira/browse/IGNITE-9470", MvccFeatureChecker.forcedMvcc());
+
         if (putBefore) {
             TestIndexingSpi.forceFail(false);
 
             info("Put key: " + key);
 
-            grid(0).cache(null).put(key, 1);
+            grid(0).cache(DEFAULT_CACHE_NAME).put(key, 1);
         }
 
         // Execute get from all nodes to create readers for near cache.
         for (int i = 0; i < gridCount(); i++)
-            grid(i).cache(null).get(key);
+            grid(i).cache(DEFAULT_CACHE_NAME).get(key);
 
         TestIndexingSpi.forceFail(true);
 
@@ -585,7 +623,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
 
         GridTestUtils.assertThrows(log, new Callable<Void>() {
             @Override public Void call() throws Exception {
-                grid(0).cache(null).remove(key);
+                grid(0).cache(DEFAULT_CACHE_NAME).remove(key);
 
                 return null;
             }
@@ -602,7 +640,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
      * @return Key.
      */
     private Integer keyForNode(ClusterNode node, int type) {
-        IgniteCache<Integer, Integer> cache = grid(0).cache(null);
+        IgniteCache<Integer, Integer> cache = grid(0).cache(DEFAULT_CACHE_NAME);
 
         if (cache.getConfiguration(CacheConfiguration.class).getCacheMode() == LOCAL)
             return ++lastKey;
@@ -665,13 +703,13 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
         }
 
         /** {@inheritDoc} */
-        @Override public Iterator<Cache.Entry<?, ?>> query(@Nullable String spaceName, Collection<Object> params,
+        @Override public Iterator<Cache.Entry<?, ?>> query(@Nullable String cacheName, Collection<Object> params,
             @Nullable IndexingQueryFilter filters) throws IgniteSpiException {
             throw new UnsupportedOperationException();
         }
 
         /** {@inheritDoc} */
-        @Override public void store(@Nullable String spaceName, Object key, Object val, long expirationTime)
+        @Override public void store(@Nullable String cacheName, Object key, Object val, long expirationTime)
             throws IgniteSpiException {
             if (fail) {
                 fail = false;
@@ -681,7 +719,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
         }
 
         /** {@inheritDoc} */
-        @Override public void remove(@Nullable String spaceName, Object k)
+        @Override public void remove(@Nullable String cacheName, Object k)
             throws IgniteSpiException {
             if (fail) {
                 fail = false;
@@ -691,17 +729,7 @@ public abstract class IgniteTxExceptionAbstractSelfTest extends GridCacheAbstrac
         }
 
         /** {@inheritDoc} */
-        @Override public void onSwap(@Nullable String spaceName, Object key) throws IgniteSpiException {
-            // No-op.
-        }
-
-        /** {@inheritDoc} */
-        @Override public void onUnswap(@Nullable String spaceName, Object key, Object val) throws IgniteSpiException {
-            // No-op.
-        }
-
-        /** {@inheritDoc} */
-        @Override public void spiStart(@Nullable String gridName) throws IgniteSpiException {
+        @Override public void spiStart(@Nullable String igniteInstanceName) throws IgniteSpiException {
             // No-op.
         }
 

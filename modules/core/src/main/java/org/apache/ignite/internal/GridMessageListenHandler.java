@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.ignite.IgniteCheckedException;
@@ -32,6 +33,7 @@ import org.apache.ignite.internal.processors.continuous.GridContinuousBatch;
 import org.apache.ignite.internal.processors.continuous.GridContinuousBatchAdapter;
 import org.apache.ignite.internal.processors.continuous.GridContinuousHandler;
 import org.apache.ignite.internal.util.lang.GridPeerDeployAware;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
@@ -125,9 +127,14 @@ public class GridMessageListenHandler implements GridContinuousHandler {
     }
 
     /** {@inheritDoc} */
-    @Override public void updateCounters(AffinityTopologyVersion topVer, Map<UUID, Map<Integer, Long>> cntrsPerNode,
-        Map<Integer, Long> cntrs) {
+    @Override public void updateCounters(AffinityTopologyVersion topVer, Map<UUID, Map<Integer, T2<Long, Long>>> cntrsPerNode,
+        Map<Integer, T2<Long, Long>> cntrs) {
         // No-op.
+    }
+
+    /** {@inheritDoc} */
+    @Override public Map<Integer, T2<Long, Long>> updateCounters() {
+        return Collections.emptyMap();
     }
 
     /** {@inheritDoc} */
@@ -136,11 +143,6 @@ public class GridMessageListenHandler implements GridContinuousHandler {
         ctx.io().addUserMessageListener(topic, pred);
 
         return RegisterStatus.REGISTERED;
-    }
-
-    /** {@inheritDoc} */
-    @Override public void onListenerRegistered(UUID routineId, GridKernalContext ctx) {
-        // No-op.
     }
 
     /** {@inheritDoc} */
@@ -159,9 +161,9 @@ public class GridMessageListenHandler implements GridContinuousHandler {
         assert ctx.config().isPeerClassLoadingEnabled();
 
         if (topic != null)
-            topicBytes = ctx.config().getMarshaller().marshal(topic);
+            topicBytes = U.marshal(ctx.config().getMarshaller(), topic);
 
-        predBytes = ctx.config().getMarshaller().marshal(pred);
+        predBytes = U.marshal(ctx.config().getMarshaller(), pred);
 
         // Deploy only listener, as it is very likely to be of some user class.
         GridPeerDeployAware pda = U.peerDeployAware(pred);
@@ -193,14 +195,19 @@ public class GridMessageListenHandler implements GridContinuousHandler {
         ClassLoader ldr = dep.classLoader();
 
         if (topicBytes != null)
-            topic = ctx.config().getMarshaller().unmarshal(topicBytes, U.resolveClassLoader(ldr, ctx.config()));
+            topic = U.unmarshal(ctx, topicBytes, U.resolveClassLoader(ldr, ctx.config()));
 
-        pred = ctx.config().getMarshaller().unmarshal(predBytes, U.resolveClassLoader(ldr, ctx.config()));
+        pred = U.unmarshal(ctx, predBytes, U.resolveClassLoader(ldr, ctx.config()));
     }
 
     /** {@inheritDoc} */
     @Override public GridContinuousBatch createBatch() {
         return new GridContinuousBatchAdapter();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onClientDisconnected() {
+        // No-op.
     }
 
     /** {@inheritDoc} */
@@ -221,6 +228,11 @@ public class GridMessageListenHandler implements GridContinuousHandler {
         catch (CloneNotSupportedException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onNodeLeft() {
+        // No-op.
     }
 
     /** {@inheritDoc} */

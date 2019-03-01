@@ -44,35 +44,46 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteIllegalStateException;
 import org.apache.ignite.Ignition;
+import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.events.Event;
 import org.apache.ignite.events.EventType;
+import org.apache.ignite.internal.GridComponent;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.managers.discovery.DiscoveryCustomMessage;
 import org.apache.ignite.internal.processors.continuous.StartRoutineAckDiscoveryMessage;
 import org.apache.ignite.internal.processors.port.GridPortRecord;
+import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.lang.GridAbsPredicate;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.G;
+import org.apache.ignite.internal.util.typedef.PA;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.lang.IgniteUuid;
+import org.apache.ignite.plugin.segmentation.SegmentationPolicy;
 import org.apache.ignite.spi.IgniteSpiException;
 import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
+import org.apache.ignite.spi.discovery.DiscoveryDataBag;
 import org.apache.ignite.spi.discovery.DiscoverySpi;
+import org.apache.ignite.spi.discovery.DiscoverySpiDataExchange;
+import org.apache.ignite.spi.discovery.tcp.internal.DiscoveryDataPacket;
 import org.apache.ignite.spi.discovery.tcp.internal.TcpDiscoveryNode;
+import org.apache.ignite.spi.discovery.tcp.internal.TcpDiscoveryStatistics;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.multicast.TcpDiscoveryMulticastIpFinder;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryAbstractMessage;
+import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryConnectionCheckMessage;
 import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryCustomEventMessage;
-import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryHeartbeatMessage;
+import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryMetricsUpdateMessage;
 import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryNodeAddFinishedMessage;
 import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryNodeAddedMessage;
 import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryNodeFailedMessage;
@@ -80,17 +91,22 @@ import org.apache.ignite.spi.discovery.tcp.messages.TcpDiscoveryNodeLeftMessage;
 import org.apache.ignite.testframework.GridStringLogger;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
-import org.eclipse.jetty.util.ConcurrentHashSet;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Test;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.ignite.events.EventType.EVT_JOB_MAPPED;
 import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_JOINED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
 import static org.apache.ignite.events.EventType.EVT_NODE_METRICS_UPDATED;
+import static org.apache.ignite.events.EventType.EVT_NODE_SEGMENTED;
 import static org.apache.ignite.events.EventType.EVT_TASK_FAILED;
 import static org.apache.ignite.events.EventType.EVT_TASK_FINISHED;
+import static org.apache.ignite.internal.GridComponent.DiscoveryDataExchangeType.MARSHALLER_PROC;
+import static org.apache.ignite.internal.MarshallerPlatformIds.JAVA_ID;
 import static org.apache.ignite.spi.IgnitePortProtocol.UDP;
 
 /**
@@ -109,7 +125,17 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /** */
     private static ThreadLocal<TcpDiscoverySpi> nodeSpi = new ThreadLocal<>();
 
-    private GridStringLogger strLogger;
+    /** */
+    private GridStringLogger strLog;
+
+    /** */
+    private CacheConfiguration[] ccfgs;
+
+    /** */
+    private boolean client;
+
+    /** */
+    private SegmentationPolicy segPlc;
 
     /**
      * @throws Exception If fails.
@@ -119,29 +145,25 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     }
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         ((TcpCommunicationSpi)cfg.getCommunicationSpi()).setSharedMemoryPort(-1);
 
         TcpDiscoverySpi spi = nodeSpi.get();
 
         if (spi == null) {
-            spi = gridName.contains("testPingInterruptedOnNodeFailedFailingNode") ?
+            spi = igniteInstanceName.contains("testPingInterruptedOnNodeFailedFailingNode") ?
                 new TestTcpDiscoverySpi() : new TcpDiscoverySpi();
         }
         else
             nodeSpi.set(null);
 
-        discoMap.put(gridName, spi);
+        discoMap.put(igniteInstanceName, spi);
 
         spi.setIpFinder(ipFinder);
 
         spi.setNetworkTimeout(2500);
-
-        spi.setHeartbeatFrequency(1000);
-
-        spi.setMaxMissedHeartbeats(3);
 
         spi.setIpFinderCleanFrequency(5000);
 
@@ -149,18 +171,30 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
         cfg.setDiscoverySpi(spi);
 
-        cfg.setCacheConfiguration();
+        cfg.setFailureDetectionTimeout(7500);
+
+        if (ccfgs != null)
+            cfg.setCacheConfiguration(ccfgs);
+        else
+            cfg.setCacheConfiguration();
+
+        if (segPlc != null)
+            cfg.setSegmentationPolicy(segPlc);
 
         cfg.setIncludeEventTypes(EVT_TASK_FAILED, EVT_TASK_FINISHED, EVT_JOB_MAPPED);
 
         cfg.setIncludeProperties();
 
-        if (!gridName.contains("LoopbackProblemTest"))
+        cfg.setMetricsUpdateFrequency(1000);
+
+        if (!igniteInstanceName.contains("LoopbackProblemTest"))
             cfg.setLocalHost("127.0.0.1");
 
-        if (gridName.contains("testFailureDetectionOnNodePing")) {
+        if (igniteInstanceName.contains("testFailureDetectionOnNodePing")) {
             spi.setReconnectCount(1); // To make test faster: on Windows 1 connect takes 1 second.
-            spi.setHeartbeatFrequency(40000);
+
+            cfg.setMetricsUpdateFrequency(40000);
+            cfg.setClientFailureDetectionTimeout(41000);
         }
 
         cfg.setConnectorConfiguration(null);
@@ -168,17 +202,17 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
         if (nodeId != null)
             cfg.setNodeId(nodeId);
 
-        if (gridName.contains("NonSharedIpFinder")) {
+        if (igniteInstanceName.contains("NonSharedIpFinder")) {
             TcpDiscoveryVmIpFinder finder = new TcpDiscoveryVmIpFinder();
 
             finder.setAddresses(Arrays.asList("127.0.0.1:47501"));
 
             spi.setIpFinder(finder);
         }
-        else if (gridName.contains("MulticastIpFinder")) {
+        else if (igniteInstanceName.contains("MulticastIpFinder")) {
             TcpDiscoveryMulticastIpFinder finder = new TcpDiscoveryMulticastIpFinder();
 
-            finder.setAddressRequestAttempts(10);
+            finder.setAddressRequestAttempts(5);
             finder.setMulticastGroup(GridTestUtils.getNextMulticastGroup(getClass()));
             finder.setMulticastPort(GridTestUtils.getNextMulticastPort(getClass()));
 
@@ -189,18 +223,24 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
             if (U.isMacOs())
                 spi.setLocalAddress(F.first(U.allLocalIps()));
         }
-        else if (gridName.contains("testPingInterruptedOnNodeFailedPingingNode"))
+        else if (igniteInstanceName.contains("testPingInterruptedOnNodeFailedPingingNode"))
             cfg.setFailureDetectionTimeout(30_000);
-        else if (gridName.contains("testNoRingMessageWorkerAbnormalFailureNormalNode")) {
+        else if (igniteInstanceName.contains("testNoRingMessageWorkerAbnormalFailureNormalNode"))
             cfg.setFailureDetectionTimeout(3_000);
-        }
-        else if (gridName.contains("testNoRingMessageWorkerAbnormalFailureSegmentedNode")) {
+        else if (igniteInstanceName.contains("testNoRingMessageWorkerAbnormalFailureSegmentedNode")) {
             cfg.setFailureDetectionTimeout(6_000);
 
-            cfg.setGridLogger(strLogger = new GridStringLogger());
+            cfg.setGridLogger(strLog = new GridStringLogger());
+
+            strLog.logLength(300_000);
         }
-        else if (gridName.contains("testNodeShutdownOnRingMessageWorkerFailureFailedNode"))
-            cfg.setGridLogger(strLogger = new GridStringLogger());
+        else if (igniteInstanceName.contains("testNodeShutdownOnRingMessageWorkerFailureFailedNode")) {
+            cfg.setGridLogger(strLog = new GridStringLogger());
+
+            strLog.logLength(300_000);
+        }
+
+        cfg.setClientMode(client);
 
         return cfg;
     }
@@ -215,6 +255,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testSingleNodeStartStop() throws Exception {
         try {
             startGrid(1);
@@ -227,6 +268,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testThreeNodesStartStop() throws Exception {
         try {
             IgniteEx ignite1 = startGrid(1);
@@ -279,15 +321,16 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any errors occur.
      */
+    @Test
     public void testNodeConnectMessageSize() throws Exception {
         try {
             Ignite g1 = startGrid(1);
 
-            final AtomicInteger gridNameIdx = new AtomicInteger(1);
+            final AtomicInteger igniteInstanceNameIdx = new AtomicInteger(1);
 
             GridTestUtils.runMultiThreaded(new Callable<Object>() {
                 @Nullable @Override public Object call() throws Exception {
-                    startGrid(gridNameIdx.incrementAndGet());
+                    startGrid(igniteInstanceNameIdx.incrementAndGet());
 
                     return null;
                 }
@@ -310,6 +353,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testPing() throws Exception {
         try {
             startGrid(1);
@@ -340,6 +384,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testFailureDetectionOnNodePing1() throws Exception {
         try {
             Ignite g1 = startGrid("testFailureDetectionOnNodePingCoordinator");
@@ -356,6 +401,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testFailureDetectionOnNodePing2() throws Exception {
         try {
             startGrid("testFailureDetectionOnNodePingCoordinator");
@@ -372,6 +418,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testFailureDetectionOnNodePing3() throws Exception {
         try {
             Ignite g1 = startGrid("testFailureDetectionOnNodePingCoordinator");
@@ -414,13 +461,14 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
         assertFalse("Ping is ok for node " + failedNodeId + ", but had to fail.", res);
 
-        // Heartbeat interval is 40 seconds, but we should detect node failure faster.
+        // Metrics update interval is 40 seconds, but we should detect node failure faster.
         assert cnt.await(7, SECONDS);
     }
 
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testPingInterruptedOnNodeFailed() throws Exception {
         try {
             final Ignite pingingNode = startGrid("testPingInterruptedOnNodeFailedPingingNode");
@@ -498,6 +546,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testPingInterruptedOnNodeLeft() throws Exception {
         try {
             final Ignite pingingNode = startGrid("testPingInterruptedOnNodeFailedPingingNode");
@@ -553,6 +602,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testNodeAdded() throws Exception {
         try {
             final Ignite g1 = startGrid(1);
@@ -594,6 +644,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testOrdinaryNodeLeave() throws Exception {
         try {
             Ignite g1 = startGrid(1);
@@ -629,6 +680,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testCoordinatorNodeLeave() throws Exception {
         try {
             startGrid(1);
@@ -673,6 +725,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testOrdinaryNodeFailure() throws Exception {
         try {
             Ignite g1 = startGrid(1);
@@ -707,6 +760,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testCoordinatorNodeFailure() throws Exception {
         try {
             Ignite g1 = startGrid(1);
@@ -736,29 +790,14 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testMetricsSending() throws Exception {
         final AtomicBoolean stopping = new AtomicBoolean();
 
         try {
-            final CountDownLatch latch1 = new CountDownLatch(1);
-
             final Ignite g1 = startGrid(1);
 
-            IgnitePredicate<Event> lsnr1 = new IgnitePredicate<Event>() {
-                @Override public boolean apply(Event evt) {
-                    info(evt.message());
-
-                    latch1.countDown();
-
-                    return true;
-                }
-            };
-
-            g1.events().localListen(lsnr1, EVT_NODE_METRICS_UPDATED);
-
-            assert latch1.await(10, SECONDS);
-
-            g1.events().stopLocalListen(lsnr1);
+            awaitMetricsUpdate(1);
 
             final CountDownLatch latch1_1 = new CountDownLatch(1);
             final CountDownLatch latch1_2 = new CountDownLatch(1);
@@ -825,6 +864,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testFailBeforeNodeAddedSent() throws Exception {
         try {
             Ignite g1 = startGrid(1);
@@ -870,6 +910,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testFailBeforeNodeLeftSent() throws Exception {
         try {
             startGrid(1);
@@ -911,6 +952,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testIpFinderCleaning() throws Exception {
         try {
             ipFinder.registerAddresses(Arrays.asList(new InetSocketAddress("1.1.1.1", 1024),
@@ -958,6 +1000,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testNonSharedIpFinder() throws Exception {
         try {
             GridTestUtils.runMultiThreadedAsync(new Callable<Object>() {
@@ -981,6 +1024,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testMulticastIpFinder() throws Exception {
         try {
             for (int i = 0; i < 5; i++) {
@@ -1013,6 +1057,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testInvalidAddressIpFinder() throws Exception {
         ipFinder.setShared(false);
 
@@ -1039,6 +1084,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testJoinTimeout() throws Exception {
         try {
             // This start will fail as expected.
@@ -1060,6 +1106,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testJoinTimeoutForIpFinder() throws Exception {
         try {
             // This start will fail as expected.
@@ -1094,6 +1141,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDirtyIpFinder() throws Exception {
         try {
             // Dirty IP finder
@@ -1113,6 +1161,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testDuplicateId() throws Exception {
         try {
             // Random ID.
@@ -1144,6 +1193,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testLoopbackProblemFirstNodeOnLoopback() throws Exception {
         // On Windows and Mac machines two nodes can reside on the same port
         // (if one node has localHost="127.0.0.1" and another has localHost="0.0.0.0").
@@ -1176,6 +1226,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testLoopbackProblemSecondNodeOnLoopback() throws Exception {
         if (U.isWindows() || U.isMacOs())
             return;
@@ -1205,6 +1256,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If any error occurs.
      */
+    @Test
     public void testGridStartTime() throws Exception {
         try {
             startGridsMultiThreaded(5);
@@ -1251,6 +1303,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testCustomEventRace1_1() throws Exception {
         try {
             customEventRace1(true, false);
@@ -1263,6 +1316,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testCustomEventRace1_2() throws Exception {
         try {
             customEventRace1(false, false);
@@ -1275,6 +1329,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testCustomEventRace1_3() throws Exception {
         try {
             customEventRace1(true, true);
@@ -1313,7 +1368,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
                 nodeSpi.set(new TestCustomEventRaceSpi());
 
-                Ignite ignite2 = startGrid(2);
+                startGrid(2);
 
                 return null;
             }
@@ -1325,7 +1380,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
         IgniteInternalFuture<?> fut2 = GridTestUtils.runAsync(new Callable<Void>() {
             @Override public Void call() throws Exception {
-                CacheConfiguration ccfg = new CacheConfiguration();
+                CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
                 ccfg.setName(CACHE_NAME);
 
@@ -1376,6 +1431,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testCustomEventCoordinatorFailure1() throws Exception {
         try {
             customEventCoordinatorFailure(true);
@@ -1388,6 +1444,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testCustomEventCoordinatorFailure2() throws Exception {
         try {
             customEventCoordinatorFailure(false);
@@ -1400,6 +1457,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testNodeShutdownOnRingMessageWorkerFailure() throws Exception {
         try {
             final TestMessageWorkerFailureSpi1 spi0 = new TestMessageWorkerFailureSpi1(
@@ -1438,7 +1496,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
             assertTrue(disconnected.get());
 
-            String result = strLogger.toString();
+            String result = strLog.toString();
 
             assert result.contains("TcpDiscoverSpi's message worker thread failed abnormally") : result;
         }
@@ -1450,6 +1508,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testNoRingMessageWorkerAbnormalFailureOnSegmentation() throws Exception {
         try {
             TestMessageWorkerFailureSpi1 spi1 = new TestMessageWorkerFailureSpi1(
@@ -1520,7 +1579,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
             Thread.sleep(10_000);
 
 
-            String result = strLogger.toString();
+            String result = strLog.toString();
 
             assert result.contains("Local node SEGMENTED") &&
                 !result.contains("TcpDiscoverSpi's message worker thread failed abnormally") : result;
@@ -1533,6 +1592,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed
      */
+    @Test
     public void testNodeShutdownOnRingMessageWorkerStartNotFinished() throws Exception {
         try {
             Ignite ignite0 = startGrid(0);
@@ -1595,7 +1655,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
             @Override public Void call() throws Exception {
                 log.info("Create test cache");
 
-                CacheConfiguration ccfg = new CacheConfiguration();
+                CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
                 ccfg.setName(CACHE_NAME);
 
@@ -1642,19 +1702,20 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testFailedNodes1() throws Exception {
         try {
             final int FAIL_ORDER = 3;
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             final Ignite ignite0 = startGrid(0);
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             startGrid(1);
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             Ignite ignite2 = startGrid(2);
 
@@ -1670,19 +1731,32 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     }
 
     /**
+     * @param failOrder Fail order.
+     * @return Failed node spi.
+     */
+    @NotNull private TestFailedNodesSpi createFailedNodeSpi(int failOrder) {
+        TestFailedNodesSpi spi = new TestFailedNodesSpi(failOrder);
+
+        spi.setConnectionRecoveryTimeout(0);
+
+        return spi;
+    }
+
+    /**
      * Coordinator is added in failed list, concurrent nodes start.
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testFailedNodes2() throws Exception {
         try {
             final int FAIL_ORDER = 3;
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             Ignite ignite0 = startGrid(0);
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             startGrid(1);
 
@@ -1692,7 +1766,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
                 @Override public Void call() throws Exception {
                     int idx = nodeIdx.incrementAndGet();
 
-                    nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+                    nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
                     startGrid(idx);
 
@@ -1718,13 +1792,14 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testFailedNodes3() throws Exception {
         try {
-            nodeSpi.set(new TestFailedNodesSpi(-1));
+            nodeSpi.set(createFailedNodeSpi(-1));
 
             Ignite ignite0 = startGrid(0);
 
-            nodeSpi.set(new TestFailedNodesSpi(2));
+            nodeSpi.set(createFailedNodeSpi(2));
 
             Ignite ignite1 = startGrid(1);
 
@@ -1732,7 +1807,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
             waitNodeStop(ignite0.name());
 
-            ignite1.getOrCreateCache(new CacheConfiguration<>()).put(1, 1);
+            ignite1.getOrCreateCache(new CacheConfiguration<>(DEFAULT_CACHE_NAME)).put(1, 1);
 
             startGrid(2);
 
@@ -1751,19 +1826,20 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testFailedNodes4() throws Exception {
         try {
             final int FAIL_ORDER = 3;
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             final Ignite ignite0 = startGrid(0);
 
-            nodeSpi.set(new TestFailedNodesSpi(FAIL_ORDER));
+            nodeSpi.set(createFailedNodeSpi(FAIL_ORDER));
 
             Ignite ignite1 = startGrid(1);
 
-            TestFailedNodesSpi spi = new TestFailedNodesSpi(FAIL_ORDER);
+            TestFailedNodesSpi spi = createFailedNodeSpi(FAIL_ORDER);
 
             spi.stopBeforeSndFail = true;
 
@@ -1794,6 +1870,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
      *
      * @throws Exception If failed.
      */
+    @Test
     public void testFailedNodes5() throws Exception {
         try {
             ThreadLocalRandom rnd = ThreadLocalRandom.current();
@@ -1802,7 +1879,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
                 final int NODES = iter == 0 ? 2 : rnd.nextInt(3, 6);
 
                 for (int i = 0; i < NODES; i++) {
-                    nodeSpi.set(new TestFailedNodesSpi(-1));
+                    nodeSpi.set(createFailedNodeSpi(-1));
 
                     startGrid(i);
                 }
@@ -1850,6 +1927,88 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
+    public void testFailedCoordinatorNode() throws Exception {
+        checkFailedCoordinatorNode(SegmentationPolicy.STOP);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testFailedCoordinatorNodeNoopSegmentationPolicy() throws Exception {
+        checkFailedCoordinatorNode(SegmentationPolicy.NOOP);
+    }
+
+    /**
+     * @param segPlc Segmentation policy.
+     * @throws Exception If failed.
+     */
+    private void checkFailedCoordinatorNode(SegmentationPolicy segPlc) throws Exception {
+        try {
+            this.segPlc = segPlc;
+
+            IgniteEx coord = (IgniteEx)startGridsMultiThreaded(3);
+
+            UUID coordId = coord.localNode().id();
+
+            IgniteEx ignite1 = grid(1);
+
+            AtomicBoolean coordSegmented = new AtomicBoolean();
+
+            coord.events().localListen(evt -> {
+                assertEquals(EVT_NODE_SEGMENTED, evt.type());
+
+                UUID nodeId = ((DiscoveryEvent)evt).eventNode().id();
+
+                if (coordId.equals(nodeId))
+                    coordSegmented.set(true);
+
+                return true;
+            }, EVT_NODE_SEGMENTED);
+
+            CountDownLatch failedLatch = new CountDownLatch(2);
+
+            IgnitePredicate<Event> failLsnr = evt -> {
+                assertEquals(EVT_NODE_FAILED, evt.type());
+
+                UUID nodeId = ((DiscoveryEvent)evt).eventNode().id();
+
+                if (coordId.equals(nodeId))
+                    failedLatch.countDown();
+
+                return true;
+            };
+
+            ignite1.events().localListen(failLsnr, EVT_NODE_FAILED);
+
+            grid(2).events().localListen(failLsnr, EVT_NODE_FAILED);
+
+            ignite1.configuration().getDiscoverySpi().failNode(coordId, null);
+
+            assertTrue(failedLatch.await(2000, MILLISECONDS));
+
+            assertTrue(coordSegmented.get());
+
+            if (segPlc == SegmentationPolicy.STOP) {
+                assertTrue(coord.context().isStopping());
+
+                waitNodeStop(coord.name());
+            }
+            else
+                assertFalse(coord.context().isStopping());
+
+            assertEquals(2, ignite1.context().discovery().allNodes().size());
+        }
+        finally {
+            stopAllGrids();
+        }
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
     public void testCustomEventAckNotSend() throws Exception {
         try {
             TestCustomerEventAckSpi spi0 = new TestCustomerEventAckSpi();
@@ -1878,6 +2037,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testDiscoveryEventsDiscard() throws Exception {
         try {
             TestEventDiscardSpi spi = new TestEventDiscardSpi();
@@ -1888,9 +2048,9 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
             startGrid(1);
 
-            ignite0.createCache(new CacheConfiguration<>()); // Send custom message.
+            ignite0.createCache(new CacheConfiguration<>(DEFAULT_CACHE_NAME)); // Send custom message.
 
-            ignite0.destroyCache(null); // Send custom message.
+            ignite0.destroyCache(DEFAULT_CACHE_NAME); // Send custom message.
 
             stopGrid(1);
 
@@ -1910,6 +2070,188 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
     }
 
     /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testNoExtraNodeFailedMessage() throws Exception {
+        try {
+            final int NODES = 10;
+
+            startGridsMultiThreaded(NODES);
+
+            int stopIdx = 5;
+
+            Ignite failIgnite = ignite(stopIdx);
+
+            ((TcpDiscoverySpi)failIgnite.configuration().getDiscoverySpi()).simulateNodeFailure();
+
+            for (int i = 0; i < NODES; i++) {
+                if (i != stopIdx) {
+                    final Ignite ignite = ignite(i);
+
+                    GridTestUtils.waitForCondition(new PA() {
+                        @Override public boolean apply() {
+                            return ignite.cluster().topologyVersion() >= NODES + 1;
+                        }
+                    }, 10_000);
+
+                    TcpDiscoverySpi spi = (TcpDiscoverySpi)ignite.configuration().getDiscoverySpi();
+
+                    TcpDiscoveryStatistics stats = GridTestUtils.getFieldValue(spi, "stats");
+
+                    Integer cnt = stats.sentMessages().get(TcpDiscoveryNodeFailedMessage.class.getSimpleName());
+
+                    log.info("Count1: " + cnt);
+
+                    assertTrue("Invalid message count: " + cnt, cnt == null || cnt <= 2);
+
+                    cnt = stats.receivedMessages().get(TcpDiscoveryNodeFailedMessage.class.getSimpleName());
+
+                    log.info("Count2: " + cnt);
+
+                    assertTrue("Invalid message count: " + cnt, cnt == null || cnt <= 2);
+                }
+            }
+        }
+        finally {
+            stopAllGrids();
+        }
+    }
+
+    /**
+     * Test verifies Ignite nodes don't exchange system types on discovery phase but only user types.
+     */
+    @Test
+    public void testSystemMarshallerTypesFilteredOut() throws Exception {
+        try {
+            nodeSpi.set(new TestTcpDiscoveryMarshallerDataSpi());
+
+            Ignite srv1 = startGrid(0);
+
+            IgniteCache<Object, Object> organizations = srv1.createCache("organizations");
+
+            organizations.put(1, new Organization());
+
+            startGrid(1);
+
+            assertEquals("Expected items in marshaller discovery data: 1, actual: "
+                    + TestTcpDiscoveryMarshallerDataSpi.marshalledItems,
+                    1, TestTcpDiscoveryMarshallerDataSpi.marshalledItems);
+
+            IgniteCache<Object, Object> employees = srv1.createCache("employees");
+
+            employees.put(1, new Employee());
+
+            startGrid(2);
+
+            assertEquals("Expected items in marshaller discovery data: 2, actual: "
+                    + TestTcpDiscoveryMarshallerDataSpi.marshalledItems,
+                    2, TestTcpDiscoveryMarshallerDataSpi.marshalledItems);
+        } finally {
+            stopAllGrids();
+        }
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDuplicatedDiscoveryDataRemoved() throws Exception {
+        try {
+            TestDiscoveryDataDuplicateSpi.checkNodeAdded = false;
+            TestDiscoveryDataDuplicateSpi.checkClientNodeAddFinished = false;
+            TestDiscoveryDataDuplicateSpi.fail = false;
+
+            ccfgs = new CacheConfiguration[5];
+
+            for (int i = 0; i < ccfgs.length; i++) {
+                CacheConfiguration ccfg = new CacheConfiguration();
+
+                ccfg.setName(i == 0 ? DEFAULT_CACHE_NAME : ("static-cache-" + i));
+
+                ccfgs[i] = ccfg;
+            }
+
+            TestDiscoveryDataDuplicateSpi spi = new TestDiscoveryDataDuplicateSpi();
+
+            nodeSpi.set(spi);
+
+            startGrid(0);
+
+            for (int i = 0; i < 5; i++) {
+                nodeSpi.set(new TestDiscoveryDataDuplicateSpi());
+
+                startGrid(i + 1);
+            }
+
+            client = true;
+
+            Ignite clientNode = startGrid(6);
+
+            assertTrue(clientNode.configuration().isClientMode());
+
+            CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
+            ccfg.setName("c1");
+
+            clientNode.createCache(ccfg);
+
+            client = false;
+
+            nodeSpi.set(new TestDiscoveryDataDuplicateSpi());
+
+            startGrid(7);
+
+            assertTrue(TestDiscoveryDataDuplicateSpi.checkNodeAdded);
+            assertTrue(TestDiscoveryDataDuplicateSpi.checkClientNodeAddFinished);
+            assertFalse(TestDiscoveryDataDuplicateSpi.fail);
+        }
+        finally {
+            stopAllGrids();
+        }
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testFailedNodeRestoreConnection() throws Exception {
+        try {
+            TestRestoreConnectedSpi.startTest = false;
+
+            for (int i = 1; i < 5; i++) {
+                TestRestoreConnectedSpi spi = new TestRestoreConnectedSpi(3);
+
+                spi.setConnectionRecoveryTimeout(0);
+
+                nodeSpi.set(spi);
+
+                startGrid(i);
+            }
+
+            awaitPartitionMapExchange();
+
+            info("Start fail test");
+
+            TestRestoreConnectedSpi.startTest = true;
+
+            waitNodeStop(getTestIgniteInstanceName(3));
+
+            U.sleep(5000);
+
+            for (int i = 1; i < 5; i++) {
+                if (i != 3) {
+                    Ignite node = ignite(i);
+
+                    assertEquals(3, node.cluster().nodes().size());
+                }
+            }
+        }
+        finally {
+            stopAllGrids();
+        }
+    }
+
+    /**
      * @param nodeName Node name.
      * @throws Exception If failed.
      */
@@ -1921,11 +2263,11 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
 
                     return false;
                 }
-                catch (IgniteIllegalStateException e) {
+                catch (IgniteIllegalStateException ignored) {
                     return true;
                 }
             }
-        }, 10_000);
+        }, 30_000);
 
         if (!wait)
             U.dumpThreads(log);
@@ -1944,7 +2286,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
         int cntr = 0;
 
         for (Ignite ignite : allNodes) {
-            CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>();
+            CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
             ccfg.setName("cache-" + cntr++);
 
@@ -1964,13 +2306,195 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
         }
     }
 
+    /**
+     * SPI used in {@link #testSystemMarshallerTypesFilteredOut()} test to check that only
+     * user types get to discovery messages on joining new nodes.
+     */
+    private static class TestTcpDiscoveryMarshallerDataSpi extends TcpDiscoverySpi {
+        /** Marshalled items. */
+        static volatile int marshalledItems;
+
+        /** {@inheritDoc} */
+        @Override public void setDataExchange(final DiscoverySpiDataExchange exchange) {
+            super.setDataExchange(new DiscoverySpiDataExchange() {
+                @Override public DiscoveryDataBag collect(DiscoveryDataBag dataBag) {
+                    DiscoveryDataBag bag = exchange.collect(dataBag);
+
+                    if (bag.commonData().containsKey(MARSHALLER_PROC.ordinal()))
+                        marshalledItems = getJavaMappings(getAllMappings(dataBag)).size();
+
+                    return bag;
+                }
+
+                @Override public void onExchange(DiscoveryDataBag dataBag) {
+                    exchange.onExchange(dataBag);
+                }
+
+                private List getAllMappings(DiscoveryDataBag bag) {
+                    return (List) bag.commonData().get(MARSHALLER_PROC.ordinal());
+                }
+
+                private Map getJavaMappings(List allMappings) {
+                    return (Map) allMappings.get(JAVA_ID);
+                }
+            });
+        }
+    }
+
+    /**
+     * User class used in {@link #testSystemMarshallerTypesFilteredOut()} test to feed into marshaller cache.
+     */
+    private static class Organization { }
+
+    /**
+     * User class used in {@link #testSystemMarshallerTypesFilteredOut()} test to feed into marshaller cache.
+     */
+    private static class Employee { }
+
+    /**
+     *
+     */
+    private static class TestRestoreConnectedSpi extends TcpDiscoverySpi {
+        /** */
+        static volatile boolean startTest;
+
+        /** */
+        private long sleepEndTime;
+
+        /** */
+        private long errNodeOrder;
+
+        /** */
+        private ClusterNode errNext;
+
+        /**
+         * @param errNodeOrder
+         */
+        TestRestoreConnectedSpi(long errNodeOrder) {
+            this.errNodeOrder = errNodeOrder;
+        }
+
+        /** {@inheritDoc} */
+        @Override protected void writeToSocket(ClusterNode node,
+            Socket sock,
+            OutputStream out,
+            TcpDiscoveryAbstractMessage msg,
+            long timeout) throws IOException, IgniteCheckedException {
+            if (startTest && !(msg instanceof TcpDiscoveryConnectionCheckMessage)) {
+                if (node.order() == errNodeOrder) {
+                    log.info("Fail write on message send [node=" + node.id() + ", msg=" + msg + ']');
+
+                    throw new SocketTimeoutException();
+                }
+                else if (locNode.order() == errNodeOrder) {
+                    if (sleepEndTime == 0) {
+                        errNext = node;
+
+                        sleepEndTime = System.currentTimeMillis() + 3000;
+                    }
+
+                    long sleepTime = sleepEndTime - System.currentTimeMillis();
+
+                    if (sleepTime > 0) {
+                        log.info("Start sleep on message send: " + msg);
+
+                        try {
+                            U.sleep(sleepTime);
+                        }
+                        catch (IgniteInterruptedCheckedException e) {
+                            log.error("Interrupted on socket write: " + e, e);
+
+                            throw new IOException(e);
+                        }
+
+                        log.info("Stop sleep on message send: " + msg);
+
+                        if (node.equals(errNext)) {
+                            log.info("Fail write after sleep [node=" + node.id() + ", msg=" + msg + ']');
+
+                            throw new SocketTimeoutException();
+                        }
+                    }
+                }
+            }
+
+            super.writeToSocket(node, sock, out, msg, timeout);
+        }
+    }
+
+    /**
+     *
+     */
+    private static class TestDiscoveryDataDuplicateSpi extends TcpDiscoverySpi {
+        /** */
+        static volatile boolean fail;
+
+        /** */
+        static volatile boolean checkNodeAdded;
+
+        /** */
+        static volatile boolean checkClientNodeAddFinished;
+
+        /** {@inheritDoc} */
+        @Override protected void writeToSocket(Socket sock, OutputStream out,
+            TcpDiscoveryAbstractMessage msg,
+            long timeout) throws IOException, IgniteCheckedException {
+            if (msg instanceof TcpDiscoveryNodeAddedMessage) {
+                DiscoveryDataPacket dataPacket = ((TcpDiscoveryNodeAddedMessage)msg).gridDiscoveryData();
+
+                if (dataPacket != null) {
+                    Map<UUID, Map<Integer, byte[]>> discoData = U.field(dataPacket, "nodeSpecificData");
+
+                    checkDiscoData(discoData, msg);
+                }
+            }
+            else if (msg instanceof TcpDiscoveryNodeAddFinishedMessage) {
+                DiscoveryDataPacket dataPacket = ((TcpDiscoveryNodeAddFinishedMessage)msg).clientDiscoData();
+
+                if (dataPacket != null) {
+                    Map<UUID, Map<Integer, byte[]>> discoData = U.field(dataPacket, "nodeSpecificData");
+
+                    checkDiscoData(discoData, msg);
+                }
+            }
+
+            super.writeToSocket(sock, out, msg, timeout);
+        }
+
+        /**
+         * @param discoData Discovery data.
+         * @param msg Message.
+         */
+        private void checkDiscoData(Map<UUID, Map<Integer, byte[]>> discoData, TcpDiscoveryAbstractMessage msg) {
+            if (discoData != null && discoData.size() > 1) {
+                int cnt = 0;
+
+                for (Map<Integer, byte[]> map : discoData.values()) {
+                    if (map.containsKey(GridComponent.DiscoveryDataExchangeType.CACHE_PROC.ordinal()))
+                        cnt++;
+                }
+
+                if (cnt > 1) {
+                    fail = true;
+
+                    log.error("Expect cache data only from one node, but actually: " + cnt);
+                }
+
+                if (msg instanceof TcpDiscoveryNodeAddedMessage)
+                    checkNodeAdded = true;
+                else if (msg instanceof TcpDiscoveryNodeAddFinishedMessage)
+                    checkClientNodeAddFinished = true;
+            }
+        }
+    }
+
 
     /**
      *
      */
     private static class TestEventDiscardSpi extends TcpDiscoverySpi {
         /** */
-        private ConcurrentHashSet<IgniteUuid> msgIds = new ConcurrentHashSet<>();
+        private GridConcurrentHashSet<IgniteUuid> msgIds = new GridConcurrentHashSet<>();
 
         /** */
         private volatile boolean checkDuplicates;
@@ -1984,7 +2508,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
             long timeout) throws IOException, IgniteCheckedException {
             boolean add = msgIds.add(msg.id());
 
-            if (checkDuplicates && !add && !(msg instanceof TcpDiscoveryHeartbeatMessage)) {
+            if (checkDuplicates && !add && !(msg instanceof TcpDiscoveryMetricsUpdateMessage)) {
                 log.error("Send duplicated message: " + msg);
 
                 failed = true;
@@ -2010,7 +2534,7 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
                 if (msg instanceof TcpDiscoveryCustomEventMessage) {
                     try {
                         DiscoveryCustomMessage custMsg = GridTestUtils.getFieldValue(
-                            ((TcpDiscoveryCustomEventMessage)msg).message(marsh, U.gridClassLoader()), "delegate");
+                            ((TcpDiscoveryCustomEventMessage)msg).message(marshaller(), U.gridClassLoader()), "delegate");
 
                         if (custMsg instanceof StartRoutineAckDiscoveryMessage) {
                             log.info("Skip message send and stop node: " + msg);
@@ -2227,8 +2751,8 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
                     try {
                         Thread.sleep(5_000);
                     }
-                    catch (InterruptedException e) {
-                        // Ignore.
+                    catch (InterruptedException ignored) {
+                        // No-op.
                     }
                 }
 
@@ -2266,17 +2790,17 @@ public class TcpDiscoverySelfTest extends GridCommonAbstractTest {
      * @throws Exception If anything failed.
      */
     private Ignite startGridNoOptimize(int idx) throws Exception {
-        return startGridNoOptimize(getTestGridName(idx));
+        return startGridNoOptimize(getTestIgniteInstanceName(idx));
     }
 
     /**
      * Starts new grid with given name. Method optimize is not invoked.
      *
-     * @param gridName Grid name.
+     * @param igniteInstanceName Ignite instance name.
      * @return Started grid.
      * @throws Exception If failed.
      */
-    private Ignite startGridNoOptimize(String gridName) throws Exception {
-        return G.start(getConfiguration(gridName));
+    private Ignite startGridNoOptimize(String igniteInstanceName) throws Exception {
+        return G.start(getConfiguration(igniteInstanceName));
     }
 }

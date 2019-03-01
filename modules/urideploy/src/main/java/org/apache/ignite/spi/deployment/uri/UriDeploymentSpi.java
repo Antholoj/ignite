@@ -41,6 +41,8 @@ import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.compute.ComputeTask;
 import org.apache.ignite.compute.ComputeTaskName;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.util.tostring.GridToStringExclude;
+import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.LT;
@@ -52,6 +54,7 @@ import org.apache.ignite.spi.IgniteSpiAdapter;
 import org.apache.ignite.spi.IgniteSpiConfiguration;
 import org.apache.ignite.spi.IgniteSpiConsistencyChecked;
 import org.apache.ignite.spi.IgniteSpiException;
+import org.apache.ignite.spi.IgniteSpiMBeanAdapter;
 import org.apache.ignite.spi.IgniteSpiMultipleInstancesSupport;
 import org.apache.ignite.spi.deployment.DeploymentListener;
 import org.apache.ignite.spi.deployment.DeploymentResource;
@@ -111,7 +114,7 @@ import org.jetbrains.annotations.Nullable;
  * {@code META-INF/} entry may contain {@code ignite.xml} file which is a
  * task descriptor file. The purpose of task descriptor XML file is to specify
  * all tasks to be deployed. This file is a regular
- * <a href="http://www.springframework.org/documentation">Spring</a> XML
+ * <a href="https://spring.io/docs">Spring</a> XML
  * definition file.  {@code META-INF/} entry may also contain any other file
  * specified by JAR format.
  * </li>
@@ -307,7 +310,7 @@ import org.jetbrains.annotations.Nullable;
 @IgniteSpiMultipleInstancesSupport(true)
 @IgniteSpiConsistencyChecked(optional = false)
 @SuppressWarnings({"FieldAccessedSynchronizedAndUnsynchronized"})
-public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi, UriDeploymentSpiMBean {
+public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi {
     /**
      * Default deployment directory where SPI will pick up GAR files. Note that this path is relative to
      * {@code IGNITE_HOME/work} folder if {@code IGNITE_HOME} system or environment variable specified,
@@ -333,6 +336,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
     private String deployTmpDirPath;
 
     /** List of URIs to be scanned. */
+    @GridToStringInclude
     private List<String> uriList = new ArrayList<>();
 
     /** List of encoded URIs. */
@@ -342,11 +346,11 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
     private boolean checkMd5;
 
     /** */
-    @SuppressWarnings({"CollectionDeclaredAsConcreteClass"})
     private final LinkedList<GridUriDeploymentUnitDescriptor> unitLoaders = new LinkedList<>();
 
     /** */
     @SuppressWarnings({"TypeMayBeWeakened"})
+    @GridToStringExclude
     private final LastTimeUnitDescriptorComparator unitComp = new LastTimeUnitDescriptorComparator();
 
     /** List of scanner managers. Every URI has it's own manager. */
@@ -369,7 +373,6 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
     private IgniteLogger log;
 
     /** NOTE: flag for test purposes only. */
-    @SuppressWarnings("UnusedDeclaration")
     private boolean delayOnNewOrUpdatedFile;
 
     /** Configured scanners. */
@@ -382,10 +385,13 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      * If not provided, default value is {@code java.io.tmpdir} system property value.
      *
      * @param tmpDirPath Temporary directory path.
+     * @return {@code this} for chaining.
      */
     @IgniteSpiConfiguration(optional = true)
-    public void setTemporaryDirectoryPath(String tmpDirPath) {
+    public UriDeploymentSpi setTemporaryDirectoryPath(String tmpDirPath) {
         this.tmpDirPath = tmpDirPath;
+
+        return this;
     }
 
     /**
@@ -398,10 +404,13 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      * For unknown {@code IGNITE_HOME} list of URI must be provided explicitly.
      *
      * @param uriList GAR file URIs.
+     * @return {@code this} for chaining.
      */
     @IgniteSpiConfiguration(optional = true)
-    public void setUriList(List<String> uriList) {
+    public UriDeploymentSpi setUriList(List<String> uriList) {
         this.uriList = uriList;
+
+        return this;
     }
 
     /**
@@ -409,10 +418,13 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      * Otherwise it should try to load new unit regardless to possible file duplication.
      *
      * @param checkMd5 new value for the property
+     * @return {@code this} for chaining.
      */
     @IgniteSpiConfiguration(optional = true)
-    public void setCheckMd5(boolean checkMd5) {
+    public UriDeploymentSpi setCheckMd5(boolean checkMd5) {
         this.checkMd5 = checkMd5;
+
+        return this;
     }
 
     /**
@@ -420,7 +432,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      *
      * @return value of the {@code checkMd5} property.
      */
-    @Override public boolean isCheckMd5() {
+    public boolean isCheckMd5() {
         return checkMd5;
     }
 
@@ -433,19 +445,30 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      *
      * @param encodeUri {@code true} if every URI should be encoded and
      *      {@code false} otherwise.
+     * @return {@code this} for chaining.
      */
     @IgniteSpiConfiguration(optional = true)
-    public void setEncodeUri(boolean encodeUri) {
+    public UriDeploymentSpi setEncodeUri(boolean encodeUri) {
         this.encodeUri = encodeUri;
+
+        return this;
     }
 
-    /** {@inheritDoc} */
-    @Override public String getTemporaryDirectoryPath() {
+    /**
+     * Gets temporary directory path.
+     *
+     * @return Temporary directory path.
+     */
+    public String getTemporaryDirectoryPath() {
         return tmpDirPath;
     }
 
-    /** {@inheritDoc} */
-    @Override public List<String> getUriList() {
+    /**
+     * Gets list of URIs that are processed by SPI.
+     *
+     * @return List of URIs.
+     */
+    public List<String> getUriList() {
         return Collections.unmodifiableList(uriList);
     }
 
@@ -467,10 +490,13 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      * Sets scanners.
      *
      * @param scanners Scanners.
+     * @return {@code this} for chaining.
      */
     @IgniteSpiConfiguration(optional = true)
-    public void setScanners(UriDeploymentScanner... scanners) {
+    public UriDeploymentSpi setScanners(UriDeploymentScanner... scanners) {
         this.scanners = scanners;
+
+        return this;
     }
 
     /** {@inheritDoc} */
@@ -510,7 +536,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
     }
 
     /** {@inheritDoc} */
-    @Override public void spiStart(String gridName) throws IgniteSpiException {
+    @Override public void spiStart(String igniteInstanceName) throws IgniteSpiException {
         // Start SPI start stopwatch.
         startStopwatch();
 
@@ -523,7 +549,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
 
         initializeTemporaryDirectoryPath();
 
-        registerMBean(gridName, this, UriDeploymentSpiMBean.class);
+        registerMBean(igniteInstanceName, new UriDeploymentSpiMBeanImpl(this), UriDeploymentSpiMBean.class);
 
         FilenameFilter filter = new FilenameFilter() {
             @Override public boolean accept(File dir, String name) {
@@ -580,7 +606,8 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
                             uriList.add(U.hidePassword(uri));
                     }
 
-                    log.info("Found deleted GAR units [uris=" + uriList + ']');
+                    if (log.isInfoEnabled())
+                        log.info("Found deleted GAR units [uris=" + uriList + ']');
                 }
 
                 processDeletedFiles(uris);
@@ -621,7 +648,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
 
             for (UriDeploymentScanner scanner : scanners) {
                 if (scanner.acceptsURI(uri)) {
-                    mgr = new UriDeploymentScannerManager(gridName, uri, file, freq > 0 ? freq :
+                    mgr = new UriDeploymentScannerManager(igniteInstanceName, uri, file, freq > 0 ? freq :
                         scanner.getDefaultScanFrequency(), filter, lsnr, log, scanner);
 
                     break;
@@ -677,8 +704,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
     }
 
     /** {@inheritDoc} */
-    @Nullable
-    @Override public DeploymentResource findResource(String rsrcName) {
+    @Nullable @Override public DeploymentResource findResource(String rsrcName) {
         assert rsrcName != null;
 
         // Wait until all scanner managers finish their first scanning.
@@ -821,8 +847,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
      * if registered resources conflicts with rule when all task classes must be
      * annotated with different task names.
      */
-    @Nullable
-    private Map<String, String> addResources(ClassLoader ldr, GridUriDeploymentUnitDescriptor desc, Class<?>[] clss)
+    @Nullable private Map<String, String> addResources(ClassLoader ldr, GridUriDeploymentUnitDescriptor desc, Class<?>[] clss)
         throws IgniteSpiException {
         assert ldr != null;
         assert desc != null;
@@ -1029,7 +1054,7 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
         URI uri;
 
         try {
-            uri = U.resolveWorkDirectory(DFLT_DEPLOY_DIR, false).toURI();
+            uri = U.resolveWorkDirectory(ignite.configuration().getWorkDirectory(), DFLT_DEPLOY_DIR, false).toURI();
         }
         catch (IgniteCheckedException e) {
             throw new IgniteSpiException("Failed to initialize default file scanner", e);
@@ -1343,7 +1368,39 @@ public class UriDeploymentSpi extends IgniteSpiAdapter implements DeploymentSpi,
     }
 
     /** {@inheritDoc} */
+    public IgniteSpiAdapter setName(String name) {
+        super.setName(name);
+
+        return this;
+    }
+
+    /** {@inheritDoc} */
     @Override public String toString() {
         return S.toString(UriDeploymentSpi.class, this);
+    }
+
+    /**
+     * MBean implementation for UriDeploymentSpi.
+     */
+    private class UriDeploymentSpiMBeanImpl extends IgniteSpiMBeanAdapter implements UriDeploymentSpiMBean {
+        /** {@inheritDoc} */
+        UriDeploymentSpiMBeanImpl(IgniteSpiAdapter spiAdapter) {
+            super(spiAdapter);
+        }
+
+        /** {@inheritDoc} */
+        @Override public String getTemporaryDirectoryPath() {
+            return UriDeploymentSpi.this.getTemporaryDirectoryPath();
+        }
+
+        /** {@inheritDoc} */
+        @Override public List<String> getUriList() {
+            return  UriDeploymentSpi.this.getUriList();
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean isCheckMd5() {
+            return  UriDeploymentSpi.this.isCheckMd5();
+        }
     }
 }

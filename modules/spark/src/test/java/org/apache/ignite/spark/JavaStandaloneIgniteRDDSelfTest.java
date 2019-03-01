@@ -35,11 +35,11 @@ import org.apache.spark.api.java.function.Function;
 import org.apache.spark.api.java.function.Function2;
 import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.sql.Column;
-import org.apache.spark.sql.DataFrame;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.junit.Test;
 import scala.Tuple2;
 
-import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.List;
@@ -54,15 +54,18 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
     /** Keys count. */
     private static final int KEYS_CNT = 10000;
 
-    /** Cache name. */
-    private static final String PARTITIONED_CACHE_NAME = "partitioned";
+    /** Entity cache name. */
+    private static final String ENTITY_CACHE_NAME = "entity";
+
+    /** Entity all types fields types name. */
+    private static final String ENTITY_ALL_TYPES_CACHE_NAME = "entityAllTypes";
 
     /** Ip finder. */
     private static final TcpDiscoveryIpFinder IP_FINDER = new TcpDiscoveryVmIpFinder(true);
 
     /** Sum function. */
     private static final Function2<Integer, Integer, Integer> SUM_F = new Function2<Integer, Integer, Integer>() {
-        public Integer call(Integer x, Integer y) {
+        @Override public Integer call(Integer x, Integer y) {
             return x + y;
         }
     };
@@ -100,7 +103,8 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
 
     /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
-        Ignition.ignite("grid-0").cache(PARTITIONED_CACHE_NAME).removeAll();
+        Ignition.ignite("grid-0").cache(ENTITY_CACHE_NAME).clear();
+        Ignition.ignite("grid-0").cache(ENTITY_ALL_TYPES_CACHE_NAME).clear();
     }
 
     /** {@inheritDoc} */
@@ -114,27 +118,22 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
             Ignition.start(getConfiguration("grid-" + i, false));
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        for (int i = 0; i < GRID_CNT; i++)
-            Ignition.stop("grid-" + i, false);
-    }
-
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testStoreDataToIgnite() throws Exception {
         JavaSparkContext sc = new JavaSparkContext("local[*]", "test");
 
         try {
             JavaIgniteContext<String, String> ic = new JavaIgniteContext<>(sc, new IgniteConfigProvider());
 
-            ic.fromCache(PARTITIONED_CACHE_NAME)
+            ic.fromCache(ENTITY_CACHE_NAME)
                 .savePairs(sc.parallelize(F.range(0, KEYS_CNT), 2).mapToPair(TO_PAIR_F));
 
             Ignite ignite = Ignition.ignite("grid-0");
 
-            IgniteCache<String, String> cache = ignite.cache(PARTITIONED_CACHE_NAME);
+            IgniteCache<String, String> cache = ignite.cache(ENTITY_CACHE_NAME);
 
             for (int i = 0; i < KEYS_CNT; i++) {
                 String val = cache.get(String.valueOf(i));
@@ -151,6 +150,7 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReadDataFromIgnite() throws Exception {
         JavaSparkContext sc = new JavaSparkContext("local[*]", "test");
 
@@ -159,12 +159,12 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
 
             Ignite ignite = Ignition.ignite("grid-0");
 
-            IgniteCache<String, Integer> cache = ignite.cache(PARTITIONED_CACHE_NAME);
+            IgniteCache<String, Integer> cache = ignite.cache(ENTITY_CACHE_NAME);
 
             for (int i = 0; i < KEYS_CNT; i++)
                 cache.put(String.valueOf(i), i);
 
-            JavaRDD<Integer> values = ic.fromCache(PARTITIONED_CACHE_NAME).map(STR_INT_PAIR_TO_INT_F);
+            JavaRDD<Integer> values = ic.fromCache(ENTITY_CACHE_NAME).map(STR_INT_PAIR_TO_INT_F);
 
             int sum = values.fold(0, SUM_F);
 
@@ -180,13 +180,14 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryObjectsFromIgnite() throws Exception {
         JavaSparkContext sc = new JavaSparkContext("local[*]", "test");
 
         try {
             JavaIgniteContext<String, Entity> ic = new JavaIgniteContext<>(sc, new IgniteConfigProvider());
 
-            JavaIgniteRDD<String, Entity> cache = ic.fromCache(PARTITIONED_CACHE_NAME);
+            JavaIgniteRDD<String, Entity> cache = ic.fromCache(ENTITY_CACHE_NAME);
 
             cache.savePairs(sc.parallelize(F.range(0, 1001), 2).mapToPair(INT_TO_ENTITY_F));
 
@@ -207,22 +208,23 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryFieldsFromIgnite() throws Exception {
         JavaSparkContext sc = new JavaSparkContext("local[*]", "test");
 
         try {
             JavaIgniteContext<String, Entity> ic = new JavaIgniteContext<>(sc, new IgniteConfigProvider());
 
-            JavaIgniteRDD<String, Entity> cache = ic.fromCache(PARTITIONED_CACHE_NAME);
+            JavaIgniteRDD<String, Entity> cache = ic.fromCache(ENTITY_CACHE_NAME);
 
             cache.savePairs(sc.parallelize(F.range(0, 1001), 2).mapToPair(INT_TO_ENTITY_F));
 
-            DataFrame df =
+            Dataset<Row> df =
                 cache.sql("select id, name, salary from Entity where name = ? and salary = ?", "name50", 5000);
 
             df.printSchema();
 
-            Row[] res = df.collect();
+            Row[] res = (Row[])df.collect();
 
             assertEquals("Invalid result length", 1, res.length);
             assertEquals("Invalid result", 50, res[0].get(0));
@@ -231,11 +233,11 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
 
             Column exp = new Column("NAME").equalTo("name50").and(new Column("SALARY").equalTo(5000));
 
-            DataFrame df0 = cache.sql("select id, name, salary from Entity").where(exp);
+            Dataset<Row> df0 = cache.sql("select id, name, salary from Entity").where(exp);
 
             df.printSchema();
 
-            Row[] res0 = df0.collect();
+            Row[] res0 = (Row[])df0.collect();
 
             assertEquals("Invalid result length", 1, res0.length);
             assertEquals("Invalid result", 50, res0[0].get(0));
@@ -252,6 +254,7 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testAllFieldsTypes() throws Exception {
         JavaSparkContext sc = new JavaSparkContext("local[*]", "test");
 
@@ -260,7 +263,7 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
         try {
             JavaIgniteContext<String, EntityTestAllTypeFields> ic = new JavaIgniteContext<>(sc, new IgniteConfigProvider());
 
-            JavaIgniteRDD<String, EntityTestAllTypeFields> cache = ic.fromCache(PARTITIONED_CACHE_NAME);
+            JavaIgniteRDD<String, EntityTestAllTypeFields> cache = ic.fromCache(ENTITY_ALL_TYPES_CACHE_NAME);
 
             cache.savePairs(sc.parallelize(F.range(0, cnt), 2).mapToPair(INT_TO_ENTITY_ALL_FIELDS_F));
 
@@ -270,25 +273,25 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
 
                 Object val = GridTestUtils.getFieldValue(e, fieldName);
 
-                DataFrame df = cache.sql(
+                Dataset<Row> df = cache.sql(
                     String.format("select %s from EntityTestAllTypeFields where %s = ?", fieldName, fieldName),
                     val);
 
                 if (val instanceof BigDecimal) {
-                    Object res = df.collect()[0].get(0);
+                    Object res = ((Row[])df.collect())[0].get(0);
 
                     assertTrue(String.format("+++ Fail on %s field", fieldName),
                         ((Comparable<BigDecimal>)val).compareTo((BigDecimal)res) == 0);
                 }
                 else if (val instanceof java.sql.Date)
                     assertEquals(String.format("+++ Fail on %s field", fieldName),
-                        val.toString(), df.collect()[0].get(0).toString());
+                        val.toString(), ((Row[])df.collect())[0].get(0).toString());
                 else if (val.getClass().isArray())
                     assertTrue(String.format("+++ Fail on %s field", fieldName), 1 <= df.count());
                 else {
-                    assertTrue(String.format("+++ Fail on %s field", fieldName), df.collect().length > 0);
-                    assertTrue(String.format("+++ Fail on %s field", fieldName), df.collect()[0].size() > 0);
-                    assertEquals(String.format("+++ Fail on %s field", fieldName), val, df.collect()[0].get(0));
+                    assertTrue(String.format("+++ Fail on %s field", fieldName), ((Row[])df.collect()).length > 0);
+                    assertTrue(String.format("+++ Fail on %s field", fieldName), ((Row[])df.collect())[0].size() > 0);
+                    assertEquals(String.format("+++ Fail on %s field", fieldName), val, ((Row[])df.collect())[0].get(0));
                 }
 
                 info(String.format("+++ Query on the filed: %s : %s passed", fieldName, f.getType().getSimpleName()));
@@ -300,10 +303,11 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
     }
 
     /**
-     * @param gridName Grid name.
+     * @param igniteInstanceName Ignite instance name.
      * @param client Client.
+     * @return Cache configuration.
      */
-    private static IgniteConfiguration getConfiguration(String gridName, boolean client) throws Exception {
+    private static IgniteConfiguration getConfiguration(String igniteInstanceName, boolean client) throws Exception {
         IgniteConfiguration cfg = new IgniteConfiguration();
 
         TcpDiscoverySpi discoSpi = new TcpDiscoverySpi();
@@ -312,27 +316,31 @@ public class JavaStandaloneIgniteRDDSelfTest extends GridCommonAbstractTest {
 
         cfg.setDiscoverySpi(discoSpi);
 
-        cfg.setCacheConfiguration(cacheConfiguration());
+        cfg.setCacheConfiguration(
+            cacheConfiguration(ENTITY_CACHE_NAME, String.class, Entity.class),
+            cacheConfiguration(ENTITY_ALL_TYPES_CACHE_NAME, String.class, EntityTestAllTypeFields.class));
 
         cfg.setClientMode(client);
 
-        cfg.setGridName(gridName);
+        cfg.setIgniteInstanceName(igniteInstanceName);
 
         return cfg;
     }
 
     /**
-     * Creates cache configuration.
+     * @param name Name.
+     * @param clsK Class k.
+     * @param clsV Class v.
+     * @return cache Configuration.
      */
-    private static CacheConfiguration<Object, Object> cacheConfiguration() {
-        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>();
+    private static CacheConfiguration<Object, Object> cacheConfiguration(String name, Class<?> clsK, Class<?> clsV) {
+        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
         ccfg.setBackups(1);
 
-        ccfg.setName(PARTITIONED_CACHE_NAME);
+        ccfg.setName(name);
 
-        ccfg.setIndexedTypes(String.class, Entity.class,
-            String.class, EntityTestAllTypeFields.class);
+        ccfg.setIndexedTypes(clsK, clsV);
 
         return ccfg;
     }

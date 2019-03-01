@@ -28,7 +28,9 @@ namespace Apache.Ignite.Core.Transactions
     public interface ITransactions
     {
         /// <summary>
-        /// Starts a transaction with default isolation, concurrency, timeout, and invalidation policy.
+        /// Starts a transaction with default isolation (<see cref="DefaultTransactionIsolation"/>, 
+        /// concurrency (<see cref="DefaultTransactionConcurrency"/>), timeout (<see cref="DefaultTimeout"/>), 
+        /// and invalidation policy.
         /// All defaults are set in CacheConfiguration at startup.
         /// </summary>
         /// <returns>New transaction.</returns>
@@ -47,7 +49,7 @@ namespace Apache.Ignite.Core.Transactions
         /// </summary>
         /// <param name="concurrency">Concurrency.</param>
         /// <param name="isolation">Isolation.</param>
-        /// <param name="timeout">Timeout.</param>
+        /// <param name="timeout">Timeout. TimeSpan.Zero for indefinite timeout.</param>
         /// <param name="txSize">Number of entries participating in transaction (may be approximate).</param>
         /// <returns>New transaction.</returns>
         ITransaction TxStart(TransactionConcurrency concurrency, TransactionIsolation isolation, 
@@ -62,6 +64,26 @@ namespace Apache.Ignite.Core.Transactions
         ITransaction Tx { get; }
 
         /// <summary>
+        /// Gets the default transaction concurrency.
+        /// </summary>
+        TransactionConcurrency DefaultTransactionConcurrency { get; }
+        
+        /// <summary>
+        /// Gets the default transaction isolation.
+        /// </summary>
+        TransactionIsolation DefaultTransactionIsolation { get; }
+
+        /// <summary>
+        /// Gets the default transaction timeout.
+        /// </summary>
+        TimeSpan DefaultTimeout { get; }
+        
+        /// <summary>
+        /// Gets the default transaction timeout on partition map exchange.
+        /// </summary>
+        TimeSpan DefaultTimeoutOnPartitionMapExchange { get; }
+
+        /// <summary>
         /// Gets the metrics.
         /// </summary>
         [SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate", 
@@ -72,5 +94,18 @@ namespace Apache.Ignite.Core.Transactions
         /// Resets the metrics.
         /// </summary>
         void ResetMetrics();
+
+        /// <summary>
+        /// Returns instance of Ignite Transactions to mark a transaction with a special label.
+        /// </summary>
+        /// <param name="label"></param>
+        /// <returns><see cref="ITransactions"/></returns>
+        ITransactions WithLabel(string label);
+
+        /// <summary>
+        /// Returns a list of active transactions initiated by this node.
+        /// </summary>
+        /// <returns>Collection of <see cref="ITransactionCollection"/></returns>
+        ITransactionCollection GetLocalActiveTransactions();
     }
 }

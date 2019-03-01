@@ -19,7 +19,6 @@ package org.apache.ignite.internal.processors.cache.query.continuous;
 
 import java.io.Serializable;
 import java.util.concurrent.atomic.AtomicInteger;
-import javax.cache.Cache;
 import javax.cache.CacheException;
 import javax.cache.event.CacheEntryEvent;
 import javax.cache.event.CacheEntryListenerException;
@@ -30,10 +29,10 @@ import org.apache.ignite.IgniteClientDisconnectedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheEntryEventSerializableFilter;
 import org.apache.ignite.cache.query.ContinuousQuery;
-import org.apache.ignite.cache.query.QueryCursor;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
@@ -44,21 +43,21 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
  */
 public class IgniteCacheContinuousQueryReconnectTest extends GridCommonAbstractTest implements Serializable {
     /** */
-    final private static AtomicInteger cnt = new AtomicInteger();
+    private static final AtomicInteger cnt = new AtomicInteger();
 
     /** */
     private volatile boolean isClient = false;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
-        CacheConfiguration ccfg = new CacheConfiguration();
+        CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         ccfg.setCacheMode(PARTITIONED);
         ccfg.setAtomicityMode(atomicMode());
         ccfg.setWriteSynchronizationMode(FULL_SYNC);
-        ccfg.setBackups(1);
+        ccfg.setBackups(2);
 
         cfg.setCacheConfiguration(ccfg);
 
@@ -84,6 +83,7 @@ public class IgniteCacheContinuousQueryReconnectTest extends GridCommonAbstractT
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReconnectServer() throws Exception {
         testReconnect(false);
     }
@@ -91,6 +91,7 @@ public class IgniteCacheContinuousQueryReconnectTest extends GridCommonAbstractT
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReconnectClient() throws Exception {
         testReconnect(true);
     }
@@ -136,16 +137,16 @@ public class IgniteCacheContinuousQueryReconnectTest extends GridCommonAbstractT
 
         isClient = false;
 
-        IgniteCache<Object, Object> cache1 = srv1.cache(null);
-        IgniteCache<Object, Object> clCache = client.cache(null);
+        IgniteCache<Object, Object> cache1 = srv1.cache(DEFAULT_CACHE_NAME);
+        IgniteCache<Object, Object> clCache = client.cache(DEFAULT_CACHE_NAME);
 
         putAndCheck(clCache, 0); // 0 remote listeners.
 
-        QueryCursor<Cache.Entry<Object, Object>> cur = (clientQuery ? clCache : cache1).query(qry);
+        (clientQuery ? clCache : cache1).query(qry);
 
         putAndCheck(clCache, 1); // 1 remote listener.
 
-        final Ignite srv2 = startGrid(2);
+        startGrid(2);
 
         putAndCheck(clCache, 2); // 2 remote listeners.
 
@@ -169,7 +170,7 @@ public class IgniteCacheContinuousQueryReconnectTest extends GridCommonAbstractT
 
         putAndCheck(clCache, 1); // 1 remote listener.
 
-        Ignite srv3 = startGrid(3);
+        startGrid(3);
 
         putAndCheck(clCache, 2); // 2 remote listeners.
 
@@ -181,11 +182,11 @@ public class IgniteCacheContinuousQueryReconnectTest extends GridCommonAbstractT
 
         isClient = false;
 
-        clCache = client.cache(null);
+        clCache = client.cache(DEFAULT_CACHE_NAME);
 
         putAndCheck(clCache, 2); // 2 remote listeners.
 
-        Ignite srv4 = startGrid(5);
+        startGrid(5);
 
         putAndCheck(clCache, 3); // 3 remote listeners.
     }

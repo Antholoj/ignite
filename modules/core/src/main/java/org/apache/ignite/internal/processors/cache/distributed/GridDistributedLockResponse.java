@@ -20,9 +20,9 @@ package org.apache.ignite.internal.processors.cache.distributed;
 import java.io.Externalizable;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.GridDirectCollection;
 import org.apache.ignite.internal.GridDirectTransient;
 import org.apache.ignite.internal.processors.cache.CacheObject;
@@ -180,6 +180,11 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
         return null;
     }
 
+    /** {@inheritDoc} */
+    @Override public IgniteLogger messageLogger(GridCacheSharedContext ctx) {
+        return ctx.txLockMessageLogger();
+    }
+
     /** {@inheritDoc}
      * @param ctx*/
     @Override public void prepareMarshal(GridCacheSharedContext ctx) throws IgniteCheckedException {
@@ -188,7 +193,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
         prepareMarshalCacheObjects(vals, ctx.cacheContext(cacheId));
 
         if (err != null && errBytes == null)
-            errBytes = ctx.marshaller().marshal(err);
+            errBytes = U.marshal(ctx.marshaller(), err);
     }
 
     /** {@inheritDoc} */
@@ -198,7 +203,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
         finishUnmarshalCacheObjects(vals, ctx.cacheContext(cacheId), ldr);
 
         if (errBytes != null)
-            err = ctx.marshaller().unmarshal(errBytes, U.resolveClassLoader(ldr, ctx.gridConfig()));
+            err = U.unmarshal(ctx, errBytes, U.resolveClassLoader(ldr, ctx.gridConfig()));
     }
 
     /** {@inheritDoc} */
@@ -216,19 +221,19 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
         }
 
         switch (writer.state()) {
-            case 7:
+            case 8:
                 if (!writer.writeByteArray("errBytes", errBytes))
                     return false;
 
                 writer.incrementState();
 
-            case 8:
+            case 9:
                 if (!writer.writeIgniteUuid("futId", futId))
                     return false;
 
                 writer.incrementState();
 
-            case 9:
+            case 10:
                 if (!writer.writeCollection("vals", vals, MessageCollectionItemType.MSG))
                     return false;
 
@@ -250,7 +255,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
             return false;
 
         switch (reader.state()) {
-            case 7:
+            case 8:
                 errBytes = reader.readByteArray("errBytes");
 
                 if (!reader.isLastRead())
@@ -258,7 +263,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
 
                 reader.incrementState();
 
-            case 8:
+            case 9:
                 futId = reader.readIgniteUuid("futId");
 
                 if (!reader.isLastRead())
@@ -266,7 +271,7 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
 
                 reader.incrementState();
 
-            case 9:
+            case 10:
                 vals = reader.readCollection("vals", MessageCollectionItemType.MSG);
 
                 if (!reader.isLastRead())
@@ -280,13 +285,13 @@ public class GridDistributedLockResponse extends GridDistributedBaseMessage {
     }
 
     /** {@inheritDoc} */
-    @Override public byte directType() {
+    @Override public short directType() {
         return 22;
     }
 
     /** {@inheritDoc} */
     @Override public byte fieldsCount() {
-        return 10;
+        return 11;
     }
 
     /** {@inheritDoc} */

@@ -41,6 +41,7 @@ import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionConcurrency;
 import org.apache.ignite.transactions.TransactionIsolation;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
@@ -52,6 +53,7 @@ import static org.apache.ignite.transactions.TransactionConcurrency.OPTIMISTIC;
 import static org.apache.ignite.transactions.TransactionConcurrency.PESSIMISTIC;
 import static org.apache.ignite.transactions.TransactionIsolation.READ_COMMITTED;
 import static org.apache.ignite.transactions.TransactionIsolation.REPEATABLE_READ;
+import static org.apache.ignite.transactions.TransactionIsolation.SERIALIZABLE;
 
 /**
  * Test getEntry and getEntries methods.
@@ -71,22 +73,22 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @return Transaction concurrency.
      */
-    abstract protected TransactionConcurrency concurrency();
+    protected abstract TransactionConcurrency concurrency();
 
     /**
      *
      * @return Transaction isolation.
      */
-    abstract protected TransactionIsolation isolation();
+    protected abstract TransactionIsolation isolation();
 
     /** {@inheritDoc} */
     @Override protected long getTestTimeout() {
-        return 60_000;
+        return 90_000;
     }
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setMarshaller(null);
 
@@ -96,8 +98,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testNear() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(PARTITIONED);
@@ -111,8 +114,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testNearTransactional() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(PARTITIONED);
@@ -126,8 +130,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPartitioned() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(PARTITIONED);
@@ -140,8 +145,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testPartitionedTransactional() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(PARTITIONED);
@@ -154,8 +160,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLocal() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(LOCAL);
@@ -168,8 +175,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLocalTransactional() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(LOCAL);
@@ -182,8 +190,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReplicated() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(REPLICATED);
@@ -196,8 +205,9 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testReplicatedTransactional() throws Exception {
-        CacheConfiguration cfg = new CacheConfiguration();
+        CacheConfiguration cfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         cfg.setWriteSynchronizationMode(FULL_SYNC);
         cfg.setCacheMode(REPLICATED);
@@ -211,7 +221,7 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
      * @param cfg Cache configuration.
      * @throws Exception If failed.
      */
-    private void test(CacheConfiguration cfg) throws Exception {
+    protected void test(CacheConfiguration cfg) throws Exception {
         test(cfg, true);
 
         test(cfg, false);
@@ -247,11 +257,49 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
 
                 testConcurrentTx(cache, PESSIMISTIC, REPEATABLE_READ, oneEntry);
                 testConcurrentTx(cache, PESSIMISTIC, READ_COMMITTED, oneEntry);
+
+                testConcurrentOptimisticTxGet(cache, REPEATABLE_READ);
+                testConcurrentOptimisticTxGet(cache, READ_COMMITTED);
+                testConcurrentOptimisticTxGet(cache, SERIALIZABLE);
             }
         }
         finally {
             cache.destroy();
         }
+    }
+
+    /**
+     * @param cache Cache.
+     * @param txIsolation Transaction isolation.
+     * @throws Exception If failed.
+     */
+    private void testConcurrentOptimisticTxGet(final IgniteCache<Integer, TestValue> cache,
+        final TransactionIsolation txIsolation) throws Exception {
+        final int key1 = 42;
+        final int key2 = 43;
+
+        cache.put(key1, new TestValue(key1));
+
+        GridTestUtils.runMultiThreaded(new Runnable() {
+            @Override public void run() {
+                IgniteTransactions txs = grid(0).transactions();
+
+                cache.put(key2, new TestValue(key2));
+
+                long stopTime = System.currentTimeMillis() + 3000;
+
+                while (System.currentTimeMillis() < stopTime) {
+                    try (Transaction tx = txs.txStart(OPTIMISTIC, txIsolation)) {
+                        cache.get(key1);
+
+                        tx.commit();
+                    }
+                    catch (Exception ignored) {
+                        fail("Unexpected exception: " + ignored);
+                    }
+                }
+            }
+        }, 10, "tx-thread");
     }
 
     /**
@@ -462,8 +510,10 @@ public abstract class CacheGetEntryAbstractTest extends GridCacheAbstractSelfTes
 
             CacheObjectContext cacheObjCtx = cacheAdapter.context().cacheObjectContext();
 
-            GridCacheMapEntry mapEntry = cacheAdapter.map().getEntry(cacheObjects.toCacheKeyObject(
-                cacheObjCtx, e.getKey(), true));
+            GridCacheEntryEx mapEntry = cacheAdapter.entryEx(cacheObjects.toCacheKeyObject(
+                cacheObjCtx, cacheAdapter.context(), e.getKey(), true));
+
+            mapEntry.unswap();
 
             assertNotNull("No entry for key: " + e.getKey(), mapEntry);
             assertEquals(mapEntry.version(), e.version());

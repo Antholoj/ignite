@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#include <cstdlib>
 #include <ignite/ignite_error.h>
 
 #include "ignite/impl/interop/interop_memory.h"
@@ -106,6 +106,11 @@ namespace ignite
             }
 
             int8_t* InteropMemory::Data()
+            {
+                return Data(memPtr);
+            }
+
+            const int8_t* InteropMemory::Data() const
             {
                 return Data(memPtr);
             }

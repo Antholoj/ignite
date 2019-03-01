@@ -26,13 +26,11 @@ import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.events.CacheEvent;
-import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.util.lang.GridAbsPredicate;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.stream.kafka.TestKafkaBroker;
@@ -43,17 +41,21 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.errors.WakeupException;
+import org.apache.kafka.common.utils.SystemTime;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.connect.runtime.ConnectorConfig;
 import org.apache.kafka.connect.runtime.Herder;
 import org.apache.kafka.connect.runtime.Worker;
 import org.apache.kafka.connect.runtime.WorkerConfig;
+import org.apache.kafka.connect.runtime.isolation.Plugins;
 import org.apache.kafka.connect.runtime.rest.entities.ConnectorInfo;
 import org.apache.kafka.connect.runtime.standalone.StandaloneConfig;
 import org.apache.kafka.connect.runtime.standalone.StandaloneHerder;
 import org.apache.kafka.connect.storage.MemoryOffsetBackingStore;
 import org.apache.kafka.connect.util.Callback;
+import org.apache.kafka.connect.util.ConnectUtils;
 import org.apache.kafka.connect.util.FutureCallback;
+import org.junit.Test;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_PUT;
 
@@ -68,7 +70,10 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
     private static final String CACHE_NAME = "testCache";
 
     /** Test topics created by connector. */
-    private static final String[] TOPICS = {"test1", "test2"};
+    private static final String[] TOPICS = {"src-test1", "src-test2"};
+
+    /** Worker id. */
+    private static final String WORKER_ID = "workerId";
 
     /** Test Kafka broker. */
     private TestKafkaBroker kafkaBroker;
@@ -83,7 +88,6 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
     private static Ignite grid;
 
     /** {@inheritDoc} */
-    @SuppressWarnings("unchecked")
     @Override protected void beforeTestsStarted() throws Exception {
         IgniteConfiguration cfg = loadConfiguration("modules/kafka/src/test/resources/example-ignite.xml");
 
@@ -93,23 +97,19 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
     }
 
     /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-    }
-
-    /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
         kafkaBroker = new TestKafkaBroker();
 
-        WorkerConfig workerCfg = new StandaloneConfig(makeWorkerProps());
+        Map<String, String> props = makeWorkerProps();
+        WorkerConfig workerCfg = new StandaloneConfig(props);
 
         MemoryOffsetBackingStore offBackingStore = new MemoryOffsetBackingStore();
-        offBackingStore.configure(workerCfg.originals());
+        offBackingStore.configure(workerCfg);
 
-        worker = new Worker(workerCfg, offBackingStore);
+        worker = new Worker(WORKER_ID, new SystemTime(), new Plugins(props), workerCfg, offBackingStore);
         worker.start();
 
-        herder = new StandaloneHerder(worker);
+        herder = new StandaloneHerder(worker, ConnectUtils.lookupKafkaClusterId(workerCfg));
         herder.start();
     }
 
@@ -136,6 +136,7 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
      *
      * @throws Exception Thrown in case of the failure.
      */
+    @Test
     public void testEventsInjectedIntoKafkaWithoutFilter() throws Exception {
         Map<String, String> srcProps = makeSourceProps(Utils.join(TOPICS, ","));
 
@@ -149,6 +150,7 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
      *
      * @throws Exception Thrown in case of the failure.
      */
+    @Test
     public void testEventsInjectedIntoKafka() throws Exception {
         doTest(makeSourceProps(Utils.join(TOPICS, ",")), true);
     }
@@ -162,8 +164,7 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
      */
     private void doTest(Map<String, String> srcProps, boolean conditioned) throws Exception {
         FutureCallback<Herder.Created<ConnectorInfo>> cb = new FutureCallback<>(new Callback<Herder.Created<ConnectorInfo>>() {
-            @Override
-            public void onCompletion(Throwable error, Herder.Created<ConnectorInfo> info) {
+            @Override public void onCompletion(Throwable error, Herder.Created<ConnectorInfo> info) {
                 if (error != null)
                     throw new RuntimeException("Failed to create a job!", error);
             }
@@ -254,6 +255,7 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-grp");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 1);
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 20000);
         props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, 10000);
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
             "org.apache.kafka.common.serialization.StringDeserializer");
@@ -280,7 +282,6 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
                 }
             }, 20_000);
 
-
             info("Waiting for unexpected records for 5 secs.");
 
             assertFalse(GridTestUtils.waitForCondition(new GridAbsPredicate() {
@@ -295,7 +296,7 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
                 }
             }, 5_000));
         }
-        catch (WakeupException e) {
+        catch (WakeupException ignored) {
             // ignore for shutdown.
         }
         finally {
@@ -345,6 +346,7 @@ public class IgniteSourceConnectorTest extends GridCommonAbstractTest {
         props.put("key.converter.schemas.enable", "false");
         props.put("value.converter.schemas.enable", "false");
         props.put(WorkerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBroker.getBrokerAddress());
+        props.put("offset.storage.file.filename", "/tmp/connect.offsets");
         // fast flushing for testing.
         props.put(WorkerConfig.OFFSET_COMMIT_INTERVAL_MS_CONFIG, "10");
 

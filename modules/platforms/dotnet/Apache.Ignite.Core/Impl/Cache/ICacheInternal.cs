@@ -19,6 +19,7 @@ namespace Apache.Ignite.Core.Impl.Cache
 {
     using System;
     using Apache.Ignite.Core.Binary;
+    using Apache.Ignite.Core.Cache.Configuration;
     using Apache.Ignite.Core.Cache.Query;
 
     /// <summary>
@@ -35,6 +36,25 @@ namespace Apache.Ignite.Core.Impl.Cache
         /// <returns>
         /// Cursor.
         /// </returns>
-        IQueryCursor<T> QueryFields<T>(SqlFieldsQuery qry, Func<IBinaryRawReader, int, T> readerFunc);
+        IQueryCursor<T> Query<T>(SqlFieldsQuery qry, Func<IBinaryRawReader, int, T> readerFunc);
+
+        /// <summary>
+        /// Invokes a cache extension.
+        /// </summary>
+        /// <typeparam name="T">The type of the result.</typeparam>
+        /// <param name="extensionId">The extension identifier.</param>
+        /// <param name="opCode">The extension op code.</param>
+        /// <param name="writeAction">The write action.</param>
+        /// <param name="readFunc">The read action.</param>
+        /// <returns>
+        /// Result of the processing.
+        /// </returns>
+        T DoOutInOpExtension<T>(int extensionId, int opCode, Action<IBinaryRawWriter> writeAction, 
+            Func<IBinaryRawReader, T> readFunc);
+
+        /// <summary>
+        /// Gets the cache configuration.
+        /// </summary>
+        CacheConfiguration GetConfiguration();
     }
 }

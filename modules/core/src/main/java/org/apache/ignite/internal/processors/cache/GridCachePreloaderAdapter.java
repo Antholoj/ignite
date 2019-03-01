@@ -19,17 +19,18 @@ package org.apache.ignite.internal.processors.cache;
 
 import java.util.Collection;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.cache.affinity.AffinityFunction;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtFuture;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicAbstractUpdateRequest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessageV2;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionExchangeId;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloaderAssignments;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
@@ -38,14 +39,14 @@ import org.jetbrains.annotations.Nullable;
  * Adapter for preloading which always assumes that preloading finished.
  */
 public class GridCachePreloaderAdapter implements GridCachePreloader {
-    /** Cache context. */
-    protected final GridCacheContext<?, ?> cctx;
+    /** */
+    protected final CacheGroupContext grp;
+
+    /** */
+    protected final GridCacheSharedContext ctx;
 
     /** Logger. */
     protected final IgniteLogger log;
-
-    /** Affinity. */
-    protected final AffinityFunction aff;
 
     /** Start future (always completed by default). */
     private final IgniteInternalFuture finFut;
@@ -54,15 +55,16 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
     protected IgnitePredicate<GridCacheEntryInfo> preloadPred;
 
     /**
-     * @param cctx Cache context.
+     * @param grp Cache group.
      */
-    public GridCachePreloaderAdapter(GridCacheContext<?, ?> cctx) {
-        assert cctx != null;
+    public GridCachePreloaderAdapter(CacheGroupContext grp) {
+        assert grp != null;
 
-        this.cctx = cctx;
+        this.grp = grp;
 
-        log = cctx.logger(getClass());
-        aff = cctx.config().getAffinity();
+        ctx = grp.shared();
+
+        log = ctx.logger(getClass());
 
         finFut = new GridFinishedFuture();
     }
@@ -73,23 +75,13 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
     }
 
     /** {@inheritDoc} */
-    @Override public void stop() {
-        // No-op.
-    }
-
-    /** {@inheritDoc} */
-    @Override public void onKernalStart() throws IgniteCheckedException {
-        // No-op.
-    }
-
-    /** {@inheritDoc} */
     @Override public void onKernalStop() {
         // No-op.
     }
 
     /** {@inheritDoc} */
-    @Override public void forcePreload() {
-        // No-op.
+    @Override public IgniteInternalFuture<Boolean> forceRebalance() {
+        return new GridFinishedFuture<>(true);
     }
 
     /** {@inheritDoc} */
@@ -129,11 +121,11 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
 
     /** {@inheritDoc} */
     @Override public void unwindUndeploys() {
-        cctx.deploy().unwind(cctx);
+        grp.unwindUndeploys();
     }
 
     /** {@inheritDoc} */
-    @Override public void handleSupplyMessage(int idx, UUID id, GridDhtPartitionSupplyMessageV2 s) {
+    @Override public void handleSupplyMessage(int idx, UUID id, GridDhtPartitionSupplyMessage s) {
         // No-op.
     }
 
@@ -143,9 +135,15 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
     }
 
     /** {@inheritDoc} */
-    @Override public IgniteInternalFuture<Object> request(Collection<KeyCacheObject> keys,
+    @Override public GridDhtFuture<Object> request(GridCacheContext ctx, Collection<KeyCacheObject> keys,
         AffinityTopologyVersion topVer) {
-        return new GridFinishedFuture<>();
+        return null;
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridDhtFuture<Object> request(GridCacheContext ctx, GridNearAtomicAbstractUpdateRequest req,
+        AffinityTopologyVersion topVer) {
+        return null;
     }
 
     /** {@inheritDoc} */
@@ -154,19 +152,24 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
     }
 
     /** {@inheritDoc} */
-    @Override public GridDhtPreloaderAssignments assign(GridDhtPartitionsExchangeFuture exchFut) {
+    @Override public boolean rebalanceRequired(AffinityTopologyVersion rebTopVer,
+        GridDhtPartitionsExchangeFuture exchFut) {
+        return true;
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridDhtPreloaderAssignments generateAssignments(GridDhtPartitionExchangeId exchId,
+                                                                     GridDhtPartitionsExchangeFuture exchFut) {
         return null;
     }
 
     /** {@inheritDoc} */
-    @Override public Callable<Boolean> addAssignments(GridDhtPreloaderAssignments assignments, boolean forcePreload,
-        Collection<String> caches, int cnt) {
+    @Override public Runnable addAssignments(GridDhtPreloaderAssignments assignments,
+        boolean forcePreload,
+        long rebalanceId,
+        Runnable next,
+        @Nullable GridCompoundFuture<Boolean, Boolean> forcedRebFut) {
         return null;
-    }
-
-    /** {@inheritDoc} */
-    @Override public void evictPartitionAsync(GridDhtLocalPartition part) {
-        // No-op.
     }
 
     /** {@inheritDoc} */
@@ -177,5 +180,15 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
     /** {@inheritDoc} */
     @Override public void dumpDebugInfo() {
         // No-op.
+    }
+
+    /** {@inheritDoc} */
+    @Override public void pause() {
+        // No-op
+    }
+
+    /** {@inheritDoc} */
+    @Override public void resume() {
+        // No-op
     }
 }

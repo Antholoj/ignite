@@ -141,6 +141,13 @@ namespace ignite
                 IGNITE_INTEROP_OUT_WRITE(val, int64_t, 8);
             }
 
+            void InteropOutputStream::WriteInt64(const int32_t pos, const int64_t val)
+            {
+                EnsureCapacity(pos + 8);
+
+                *reinterpret_cast<int64_t*>(data + pos) = val;
+            }
+
             void InteropOutputStream::WriteInt64Array(const int64_t* val, const int32_t len)
             {
                 IGNITE_INTEROP_OUT_WRITE_ARRAY(val, len << 3);
@@ -202,6 +209,11 @@ namespace ignite
             void InteropOutputStream::Synchronize()
             {
                 mem->Length(pos);
+            }
+
+            InteropMemory* InteropOutputStream::GetMemory()
+            {
+                return mem;
             }
 
             void InteropOutputStream::EnsureCapacity(int32_t reqCap) {

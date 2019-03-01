@@ -53,8 +53,8 @@ import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_PUT;
 
@@ -105,9 +105,8 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
-    @Before
     @SuppressWarnings("unchecked")
-    public void beforeTest() throws Exception {
+    @Override public void beforeTest() throws Exception {
         grid().<Integer, String>getOrCreateCache(defaultCacheConfiguration());
 
         // find an available local port
@@ -145,7 +144,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
         client.connect();
 
         // create mqtt streamer
-        dataStreamer = grid().dataStreamer(null);
+        dataStreamer = grid().dataStreamer(DEFAULT_CACHE_NAME);
 
         streamer = createMqttStreamer(dataStreamer);
     }
@@ -153,18 +152,17 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
-    @After
-    public void afterTest() throws Exception {
+    @Override public void afterTest() throws Exception {
         try {
             streamer.stop();
         }
-        catch (Exception e) {
+        catch (Exception ignored) {
             // ignore if already stopped
         }
 
         dataStreamer.close();
 
-        grid().cache(null).clear();
+        grid().cache(DEFAULT_CACHE_NAME).clear();
 
         broker.stop();
         broker.deleteAllMessages();
@@ -173,6 +171,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testConnectDisconnect() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -194,9 +193,9 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Ignore("https://issues.apache.org/jira/browse/IGNITE-2255")
+    @Test
     public void testConnectionStatusWithBrokerDisconnection() throws Exception {
-        fail("https://issues.apache.org/jira/browse/IGNITE-2255");
-
         // Configure streamer.
         streamer.setSingleTupleExtractor(singleTupleExtractor());
         streamer.setTopic(SINGLE_TOPIC_NAME);
@@ -225,6 +224,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleTopic_NoQoS_OneEntryPerMessage() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -247,6 +247,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMultipleTopics_NoQoS_OneEntryPerMessage() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -273,6 +274,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleTopic_NoQoS_MultipleEntriesOneMessage() throws Exception {
         // configure streamer
         streamer.setMultipleTupleExtractor(multipleTupleExtractor());
@@ -295,6 +297,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMultipleTopics_NoQoS_MultipleEntriesOneMessage() throws Exception {
         // configure streamer
         streamer.setMultipleTupleExtractor(multipleTupleExtractor());
@@ -321,6 +324,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleTopic_NoQoS_ConnectOptions_Durable() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -362,6 +366,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleTopic_NoQoS_Reconnect() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -408,6 +413,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleTopic_NoQoS_RetryOnce() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -441,12 +447,13 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
 
         Thread.sleep(3000);
 
-        assertNull(grid().cache(null).get(50));
+        assertNull(grid().cache(DEFAULT_CACHE_NAME).get(50));
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMultipleTopics_MultipleQoS_OneEntryPerMessage() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -474,6 +481,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testMultipleTopics_MultipleQoS_Mismatch() throws Exception {
         // configure streamer
         streamer.setSingleTupleExtractor(singleTupleExtractor());
@@ -483,7 +491,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
         try {
             streamer.start();
         }
-        catch (Exception e) {
+        catch (Exception ignored) {
             return;
         }
 
@@ -570,7 +578,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
             }
         };
 
-        remoteLsnr = ignite.events(ignite.cluster().forCacheNodes(null))
+        remoteLsnr = ignite.events(ignite.cluster().forCacheNodes(DEFAULT_CACHE_NAME))
             .remoteListen(cb, null, EVT_CACHE_OBJECT_PUT);
 
         return latch;
@@ -581,7 +589,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
      */
     private void assertCacheEntriesLoaded(int cnt) {
         // get the cache and check that the entries are present
-        IgniteCache<Integer, String> cache = grid().cache(null);
+        IgniteCache<Integer, String> cache = grid().cache(DEFAULT_CACHE_NAME);
 
         // for each key from 0 to count from the TEST_DATA (ordered by key), check that the entry is present in cache
         for (Integer key : new ArrayList<>(new TreeSet<>(TEST_DATA.keySet())).subList(0, cnt))
@@ -591,7 +599,7 @@ public class IgniteMqttStreamerTest extends GridCommonAbstractTest {
         assertEquals(cnt, cache.size(CachePeekMode.ALL));
 
         // remove the event listener
-        grid().events(grid().cluster().forCacheNodes(null)).stopRemoteListen(remoteLsnr);
+        grid().events(grid().cluster().forCacheNodes(DEFAULT_CACHE_NAME)).stopRemoteListen(remoteLsnr);
     }
 
     /**

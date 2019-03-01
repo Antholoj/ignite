@@ -50,14 +50,13 @@ public class BinaryReaderHandles {
      * @param pos Position.
      * @return Object.
      */
-    @SuppressWarnings("unchecked")
-    public @Nullable <T> T get(int pos) {
+    @Nullable public <T> T get(int pos) {
         switch (mode) {
             case MODE_EMPTY:
                 return null;
 
             case MODE_SINGLE:
-                return (T)data;
+                 return pos == singlePos ? (T)data : null;
 
             default:
                 assert mode == MODE_MULTIPLE;

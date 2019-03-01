@@ -197,7 +197,6 @@ public class GridBoundedConcurrentOrderedMap<K, V> extends ConcurrentSkipListMap
     }
 
     /** {@inheritDoc} */
-    @SuppressWarnings({"unchecked"})
     @Override public GridBoundedConcurrentOrderedMap<K, V> clone() {
         GridBoundedConcurrentOrderedMap<K, V> map = (GridBoundedConcurrentOrderedMap<K, V>)super.clone();
 
@@ -235,5 +234,10 @@ public class GridBoundedConcurrentOrderedMap<K, V> extends ConcurrentSkipListMap
             cnt.decrementAndGet();
 
         return rmvd;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void clear() {
+        throw new UnsupportedOperationException();
     }
 }

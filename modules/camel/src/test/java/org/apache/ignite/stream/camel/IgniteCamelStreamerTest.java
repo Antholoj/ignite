@@ -56,6 +56,7 @@ import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.stream.StreamMultipleTupleExtractor;
 import org.apache.ignite.stream.StreamSingleTupleExtractor;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_PUT;
 
@@ -107,7 +108,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
         }
 
         // create Camel streamer
-        dataStreamer = grid().dataStreamer(null);
+        dataStreamer = grid().dataStreamer(DEFAULT_CACHE_NAME);
         streamer = createCamelStreamer(dataStreamer);
     }
 
@@ -115,18 +116,19 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
         try {
             streamer.stop();
         }
-        catch (Exception e) {
+        catch (Exception ignored) {
             // ignore if already stopped
         }
 
         dataStreamer.close();
 
-        grid().cache(null).clear();
+        grid().cache(DEFAULT_CACHE_NAME).clear();
     }
 
     /**
      * @throws Exception
      */
+    @Test
     public void testSendOneEntryPerMessage() throws Exception {
         streamer.setSingleTupleExtractor(singleTupleExtractor());
 
@@ -147,6 +149,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception
      */
+    @Test
     public void testMultipleEntriesInOneMessage() throws Exception {
         streamer.setMultipleTupleExtractor(multipleTupleExtractor());
 
@@ -167,6 +170,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception
      */
+    @Test
     public void testResponseProcessorIsCalled() throws Exception {
         streamer.setSingleTupleExtractor(singleTupleExtractor());
         streamer.setResponseProcessor(new Processor() {
@@ -195,6 +199,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception
      */
+    @Test
     public void testUserSpecifiedCamelContext() throws Exception {
         final AtomicInteger cnt = new AtomicInteger();
 
@@ -228,6 +233,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception
      */
+    @Test
     public void testUserSpecifiedCamelContextWithPropertyPlaceholders() throws Exception {
         // Create a CamelContext with a custom property placeholder.
         CamelContext context = new DefaultCamelContext();
@@ -266,6 +272,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
     /**
      * @throws Exception
      */
+    @Test
     public void testInvalidEndpointUri() throws Exception {
         streamer.setSingleTupleExtractor(singleTupleExtractor());
         streamer.setEndpointUri("abc");
@@ -275,7 +282,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
             streamer.start();
             fail("Streamer started; should have failed.");
         }
-        catch (IgniteException e) {
+        catch (IgniteException ignored) {
             assertTrue(streamer.getCamelContext().getStatus() == ServiceStatus.Stopped);
             assertTrue(streamer.getCamelContext().getEndpointRegistry().size() == 0);
         }
@@ -391,7 +398,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
             }
         };
 
-        remoteLsnr = ignite.events(ignite.cluster().forCacheNodes(null))
+        remoteLsnr = ignite.events(ignite.cluster().forCacheNodes(DEFAULT_CACHE_NAME))
             .remoteListen(callback, null, EVT_CACHE_OBJECT_PUT);
 
         return latch;
@@ -402,7 +409,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
      */
     private void assertCacheEntriesLoaded(int cnt) {
         // get the cache and check that the entries are present
-        IgniteCache<Integer, String> cache = grid().cache(null);
+        IgniteCache<Integer, String> cache = grid().cache(DEFAULT_CACHE_NAME);
 
         // for each key from 0 to count from the TEST_DATA (ordered by key), check that the entry is present in cache
         for (Integer key : new ArrayList<>(new TreeSet<>(TEST_DATA.keySet())).subList(0, cnt))
@@ -412,7 +419,7 @@ public class IgniteCamelStreamerTest extends GridCommonAbstractTest {
         assertEquals(cnt, cache.size(CachePeekMode.ALL));
 
         // remove the event listener
-        grid().events(grid().cluster().forCacheNodes(null)).stopRemoteListen(remoteLsnr);
+        grid().events(grid().cluster().forCacheNodes(DEFAULT_CACHE_NAME)).stopRemoteListen(remoteLsnr);
     }
 
 }

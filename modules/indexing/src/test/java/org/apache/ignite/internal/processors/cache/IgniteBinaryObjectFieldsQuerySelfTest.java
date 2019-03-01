@@ -32,11 +32,9 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 /**
  * Tests that server nodes do not need class definitions to execute queries.
@@ -44,9 +42,6 @@ import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTest {
     /** */
     public static final String PERSON_KEY_CLS_NAME = "org.apache.ignite.tests.p2p.cache.PersonKey";
-
-    /** IP finder. */
-    private static final TcpDiscoveryIpFinder IP_FINDER = new TcpDiscoveryVmIpFinder(true);
 
     /** Grid count. */
     public static final int GRID_CNT = 4;
@@ -63,20 +58,14 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     }
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setPeerClassLoadingEnabled(false);
 
-        TcpDiscoverySpi discoSpi = new TcpDiscoverySpi();
-
-        discoSpi.setIpFinder(IP_FINDER);
-
-        cfg.setDiscoverySpi(discoSpi);
-
         cfg.setMarshaller(null);
 
-        if (getTestGridName(3).equals(gridName)) {
+        if (getTestIgniteInstanceName(3).equals(igniteInstanceName)) {
             cfg.setClientMode(true);
             cfg.setClassLoader(extClassLoader);
         }
@@ -90,7 +79,6 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     protected CacheConfiguration cache(CacheMode cacheMode, CacheAtomicityMode atomicity) throws Exception {
         CacheConfiguration cache = defaultCacheConfiguration();
 
-        cache.setName(null);
         cache.setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
         cache.setRebalanceMode(CacheRebalanceMode.SYNC);
         cache.setCacheMode(cacheMode);
@@ -104,21 +92,25 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
 
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
-        extClassLoader = getExternalClassLoader();
+        initExtClassLoader();
 
         startGrids(GRID_CNT);
     }
 
+    /** */
+    protected void initExtClassLoader() {
+        extClassLoader = getExternalClassLoader();
+    }
+
     /** {@inheritDoc} */
     @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-
         extClassLoader = null;
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryPartitionedAtomic() throws Exception {
         checkQuery(CacheMode.PARTITIONED, CacheAtomicityMode.ATOMIC);
     }
@@ -126,6 +118,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryReplicatedAtomic() throws Exception {
         checkQuery(CacheMode.REPLICATED, CacheAtomicityMode.ATOMIC);
     }
@@ -133,6 +126,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryPartitionedTransactional() throws Exception {
         checkQuery(CacheMode.PARTITIONED, CacheAtomicityMode.TRANSACTIONAL);
     }
@@ -140,6 +134,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testQueryReplicatedTransactional() throws Exception {
         checkQuery(CacheMode.REPLICATED, CacheAtomicityMode.TRANSACTIONAL);
     }
@@ -147,6 +142,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFieldsQueryPartitionedAtomic() throws Exception {
         checkFieldsQuery(CacheMode.PARTITIONED, CacheAtomicityMode.ATOMIC);
     }
@@ -154,6 +150,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFieldsQueryReplicatedAtomic() throws Exception {
         checkFieldsQuery(CacheMode.REPLICATED, CacheAtomicityMode.ATOMIC);
     }
@@ -161,6 +158,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFieldsQueryPartitionedTransactional() throws Exception {
         checkFieldsQuery(CacheMode.PARTITIONED, CacheAtomicityMode.TRANSACTIONAL);
     }
@@ -168,6 +166,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFieldsQueryReplicatedTransactional() throws Exception {
         checkFieldsQuery(CacheMode.REPLICATED, CacheAtomicityMode.TRANSACTIONAL);
     }
@@ -198,7 +197,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
             }
         }
         finally {
-            grid(3).destroyCache(null);
+            grid(3).destroyCache(DEFAULT_CACHE_NAME);
         }
     }
 
@@ -221,7 +220,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
             for (int i = 0; i < 100; i++) {
                 Object person = all.get(i).getValue();
 
-                assertEquals((Integer) i, U.field(person, "id"));
+                assertEquals(Integer.valueOf(i), U.field(person, "id"));
                 assertEquals("person-" + i, U.field(person, "name"));
                 assertEquals("person-last-" + i, U.field(person, "lastName"));
                 assertEquals((double)(i * 25), U.field(person, "salary"));
@@ -233,7 +232,7 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
             ScanQuery<BinaryObject, BinaryObject> scanQry = new ScanQuery<>(new PersonKeyFilter(max));
 
             QueryCursor<Cache.Entry<BinaryObject, BinaryObject>> curs = grid(GRID_CNT - 1)
-                .cache(null).withKeepBinary().query(scanQry);
+                .cache(DEFAULT_CACHE_NAME).withKeepBinary().query(scanQry);
 
             List<Cache.Entry<BinaryObject, BinaryObject>> records = curs.getAll();
 
@@ -248,7 +247,8 @@ public class IgniteBinaryObjectFieldsQuerySelfTest extends GridCommonAbstractTes
             }
         }
         finally {
-            grid(3).destroyCache(null);
+            grid(GRID_CNT - 1).cache(DEFAULT_CACHE_NAME).removeAll();
+            grid(GRID_CNT - 1).destroyCache(DEFAULT_CACHE_NAME);
         }
     }
 

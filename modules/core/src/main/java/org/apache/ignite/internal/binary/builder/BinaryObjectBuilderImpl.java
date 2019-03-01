@@ -22,11 +22,13 @@ import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.binary.BinaryType;
+import org.apache.ignite.internal.binary.BinaryEnumObjectImpl;
 import org.apache.ignite.internal.binary.BinaryMetadata;
 import org.apache.ignite.internal.binary.BinaryObjectImpl;
 import org.apache.ignite.internal.binary.BinaryWriterExImpl;
 import org.apache.ignite.internal.binary.GridBinaryMarshaller;
 import org.apache.ignite.internal.binary.BinaryContext;
+import org.apache.ignite.internal.binary.BinaryFieldMetadata;
 import org.apache.ignite.internal.binary.BinarySchema;
 import org.apache.ignite.internal.binary.BinarySchemaRegistry;
 import org.apache.ignite.internal.binary.BinaryObjectOffheapImpl;
@@ -34,6 +36,7 @@ import org.apache.ignite.internal.binary.BinaryUtils;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.thread.IgniteThread;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
@@ -42,6 +45,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  *
@@ -83,8 +87,8 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
     /** Context of BinaryObject reading process. Or {@code null} if object is not created from BinaryObject. */
     private final BinaryBuilderReader reader;
 
-    /** */
-    private int hashCode;
+    /** Affinity key field name. */
+    private String affFieldName;
 
     /**
      * @param clsName Class name.
@@ -117,7 +121,6 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
      */
     public BinaryObjectBuilderImpl(BinaryObjectImpl obj) {
         this(new BinaryBuilderReader(obj), obj.start());
-
         reader.registerObject(this);
     }
 
@@ -126,6 +129,8 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
      * @param start Start.
      */
     BinaryObjectBuilderImpl(BinaryBuilderReader reader, int start) {
+        assert reader != null;
+
         this.reader = reader;
         this.start = start;
         this.flags = reader.readShortPositioned(start + GridBinaryMarshaller.FLAGS_POS);
@@ -136,7 +141,6 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
         int typeId = reader.readIntPositioned(start + GridBinaryMarshaller.TYPE_ID_POS);
         ctx = reader.binaryContext();
-        hashCode = reader.readIntPositioned(start + GridBinaryMarshaller.HASH_CODE_POS);
 
         if (typeId == GridBinaryMarshaller.UNREGISTERED_TYPE_ID) {
             int mark = reader.position();
@@ -154,7 +158,7 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
                 throw new BinaryInvalidTypeException("Failed to load the class: " + clsNameToWrite, e);
             }
 
-            this.typeId = ctx.descriptorForClass(cls, false).typeId();
+            this.typeId = ctx.descriptorForClass(cls, false, false).typeId();
 
             registeredType = false;
 
@@ -171,6 +175,11 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
     /** {@inheritDoc} */
     @Override public BinaryObject build() {
         try (BinaryWriterExImpl writer = new BinaryWriterExImpl(ctx)) {
+            Thread curThread = Thread.currentThread();
+
+            if (curThread instanceof IgniteThread)
+                writer.failIfUnregistered(((IgniteThread)curThread).isForbiddenToRequestBinaryMetadata());
+
             writer.typeId(typeId);
 
             BinaryBuilderSerializer serializationCtx = new BinaryBuilderSerializer();
@@ -197,9 +206,9 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
             BinaryType meta = ctx.metadata(typeId);
 
-            Map<String, Integer> fieldsMeta = null;
+            Map<String, BinaryFieldMetadata> fieldsMeta = null;
 
-            if (reader != null) {
+            if (reader != null && BinaryUtils.hasSchema(flags)) {
                 BinarySchema schema = reader.schema();
 
                 Map<Integer, Object> assignedFldsById;
@@ -216,7 +225,7 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
                         assignedFldsById.put(fieldId, val);
 
                         if (val != REMOVED_FIELD_MARKER)
-                            fieldsMeta = checkMetadata(meta, fieldsMeta, val, name);
+                            fieldsMeta = checkMetadata(meta, fieldsMeta, val, name, fieldId);
                     }
 
                     remainsFlds = assignedFldsById.keySet();
@@ -310,7 +319,7 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
                     if (reader == null)
                         // Metadata has already been checked.
-                        fieldsMeta = checkMetadata(meta, fieldsMeta, val, name);
+                        fieldsMeta = checkMetadata(meta, fieldsMeta, val, name, fieldId);
                 }
             }
 
@@ -329,7 +338,7 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
                 reader.position(start + BinaryUtils.length(reader, start));
             }
 
-            writer.postWrite(true, registeredType, hashCode);
+            writer.postWrite(true, registeredType);
 
             // Update metadata if needed.
             int schemaId = writer.schemaId();
@@ -347,11 +356,21 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
                 BinarySchema curSchema = writer.currentSchema();
 
-                ctx.updateMetadata(typeId, new BinaryMetadata(typeId, typeName, fieldsMeta,
-                    ctx.affinityKeyFieldName(typeId), Collections.singleton(curSchema), false));
+                String affFieldName0 = affFieldName;
+
+                if (affFieldName0 == null)
+                    affFieldName0 = ctx.affinityKeyFieldName(typeId);
+
+                ctx.registerUserClassName(typeId, typeName, writer.failIfUnregistered());
+
+                ctx.updateMetadata(typeId, new BinaryMetadata(typeId, typeName, fieldsMeta, affFieldName0,
+                    Collections.singleton(curSchema), false, null), writer.failIfUnregistered());
 
                 schemaReg.addSchema(curSchema.schemaId(), curSchema);
             }
+
+            // Update hash code after schema is written.
+            writer.postWriteHashCode(registeredType ? null : clsNameToWrite);
         }
         finally {
             writer.popSchema();
@@ -365,9 +384,10 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
      * @param fieldsMeta Map holding metadata information that has to be updated.
      * @param newVal Field value being serialized.
      * @param name Field name.
+     * @param fieldId Field ID.
      */
-    private Map<String, Integer> checkMetadata(BinaryType meta, Map<String, Integer> fieldsMeta, Object newVal,
-        String name) {
+    private Map<String, BinaryFieldMetadata> checkMetadata(BinaryType meta, Map<String, BinaryFieldMetadata> fieldsMeta,
+        Object newVal, String name, int fieldId) {
         String oldFldTypeName = meta == null ? null : meta.fieldTypeName(name);
 
         boolean nullFieldVal = false;
@@ -380,20 +400,34 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
             if (((BinaryValueWithType)newVal).value() == null)
                 nullFieldVal = true;
         }
+        // Detect Enum and Enum array type.
+        else if (newVal instanceof BinaryEnumObjectImpl)
+            newFldTypeId = GridBinaryMarshaller.ENUM;
+        else if (newVal.getClass().isArray() && newVal.getClass().getComponentType() == BinaryObject.class) {
+            BinaryObject[] arr = (BinaryObject[])newVal;
+
+            newFldTypeId = arr.length > 0 && arr[0] instanceof BinaryEnumObjectImpl ?
+                GridBinaryMarshaller.ENUM_ARR : GridBinaryMarshaller.OBJ_ARR;
+        }
         else
             newFldTypeId = BinaryUtils.typeByClass(newVal.getClass());
 
         if (oldFldTypeName == null) {
             // It's a new field, we have to add it to metadata.
-            if (fieldsMeta == null)
-                fieldsMeta = new HashMap<>();
+            if (fieldsMeta == null) {
+                if (BinaryUtils.FIELDS_SORTED_ORDER)
+                    fieldsMeta = new TreeMap<>();
+                else
+                    fieldsMeta = new LinkedHashMap<>();
+            }
 
-            fieldsMeta.put(name, newFldTypeId);
+            fieldsMeta.put(name, new BinaryFieldMetadata(newFldTypeId, fieldId));
         }
         else if (!nullFieldVal) {
             String newFldTypeName = BinaryUtils.fieldTypeName(newFldTypeId);
 
-            if (!F.eq(newFldTypeName, oldFldTypeName)) {
+            if (!F.eq(newFldTypeName, oldFldTypeName) &&
+                !oldFldTypeName.equals(BinaryUtils.fieldTypeName(GridBinaryMarshaller.OBJ))) {
                 throw new BinaryObjectException(
                     "Wrong value has been set [" +
                         "typeName=" + (typeName == null ? meta.typeName() : typeName) +
@@ -405,13 +439,6 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
         }
 
         return fieldsMeta;
-    }
-
-    /** {@inheritDoc} */
-    @Override public BinaryObjectBuilderImpl hashCode(int hashCode) {
-        this.hashCode = hashCode;
-
-        return this;
     }
 
     /**
@@ -488,8 +515,22 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
         }
     }
 
+    /**
+     * If value of {@link #assignedVals} is null, set it according to
+     * {@link BinaryUtils#FIELDS_SORTED_ORDER}.
+     */
+    private Map<String, Object> assignedValues() {
+        if (assignedVals == null) {
+            if (BinaryUtils.FIELDS_SORTED_ORDER)
+                assignedVals = new TreeMap<>();
+            else
+                assignedVals = new LinkedHashMap<>();
+        }
+
+        return assignedVals;
+    }
+
     /** {@inheritDoc} */
-    @SuppressWarnings("unchecked")
     @Override public <T> T getField(String name) {
         Object val;
 
@@ -512,18 +553,17 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
 
     /** {@inheritDoc} */
     @Override public BinaryObjectBuilder setField(String name, Object val0) {
-        Object val = val0 == null ? new BinaryValueWithType(BinaryUtils.typeByClass(Object.class), null) : val0;
+        Object val = assignedValues().get(name);
 
-        if (assignedVals == null)
-            assignedVals = new LinkedHashMap<>();
+        if (val instanceof BinaryValueWithType)
+            ((BinaryValueWithType)val).value(val0);
+        else {
+            Class valCls = (val == null) ? Object.class : val.getClass();
 
-        Object oldVal = assignedVals.put(name, val);
-
-        if (oldVal instanceof BinaryValueWithType && val0 != null) {
-            ((BinaryValueWithType)oldVal).value(val);
-
-            assignedVals.put(name, oldVal);
+            val = val0 == null ? new BinaryValueWithType(BinaryUtils.typeByClass(valCls), null) : val0;
         }
+
+        assignedValues().put(name, val);
 
         return this;
     }
@@ -539,19 +579,13 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
         else
             typeId = BinaryUtils.typeByClass(type);
 
-        if (assignedVals == null)
-            assignedVals = new LinkedHashMap<>();
-
-        assignedVals.put(name, new BinaryValueWithType(typeId, val));
+        assignedValues().put(name, new BinaryValueWithType(typeId, val));
 
         return this;
     }
 
     /** {@inheritDoc} */
     @Override public BinaryObjectBuilder setField(String name, @Nullable BinaryObjectBuilder builder) {
-        if (builder == null)
-            return setField(name, null, Object.class);
-        else
             return setField(name, (Object)builder);
     }
 
@@ -562,10 +596,7 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
      * @return {@code this} instance for chaining.
      */
     @Override public BinaryObjectBuilderImpl removeField(String name) {
-        if (assignedVals == null)
-            assignedVals = new LinkedHashMap<>();
-
-        assignedVals.put(name, REMOVED_FIELD_MARKER);
+        assignedValues().put(name, REMOVED_FIELD_MARKER);
 
         return this;
     }
@@ -599,5 +630,14 @@ public class BinaryObjectBuilderImpl implements BinaryObjectBuilder {
      */
     public int typeId() {
         return typeId;
+    }
+
+    /**
+     * Set known affinity key field name.
+     *
+     * @param affFieldName Affinity key field name.
+     */
+    public void affinityFieldName(String affFieldName) {
+        this.affFieldName = affFieldName;
     }
 }

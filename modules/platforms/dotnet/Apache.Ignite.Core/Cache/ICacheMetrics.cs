@@ -26,7 +26,7 @@ namespace Apache.Ignite.Core.Cache
         /// The number of get requests that were satisfied by the cache.
         /// </summary>
         /// <returns>
-        /// The number of hits
+        /// The number of hits.
         /// </returns>
         long CacheHits { get; }
 
@@ -42,7 +42,7 @@ namespace Apache.Ignite.Core.Cache
         /// A miss is a get request that is not satisfied.
         /// </summary>
         /// <returns>
-        /// The number of misses
+        /// The number of misses.
         /// </returns>
         long CacheMisses { get; }
 
@@ -80,7 +80,7 @@ namespace Apache.Ignite.Core.Cache
         long CacheRemovals { get; }
 
         /// <summary>
-        /// The total number of evictions from the cache. An eviction is a removal initiated by the cache itself 
+        /// The total number of evictions from the cache. An eviction is a removal initiated by the cache itself
         /// to free up space. An eviction is not treated as a removal and does not appear in the removal counts.
         /// </summary>
         /// <returns>
@@ -92,7 +92,7 @@ namespace Apache.Ignite.Core.Cache
         /// The mean time to execute gets.
         /// </summary>
         /// <returns>
-        /// The time in �s.
+        /// The time in ms.
         /// </returns>
         float AverageGetTime { get; }
 
@@ -100,7 +100,7 @@ namespace Apache.Ignite.Core.Cache
         /// The mean time to execute puts.
         /// </summary>
         /// <returns>
-        /// The time in �s.
+        /// The time in s.
         /// </returns>
         float AveragePutTime { get; }
 
@@ -108,7 +108,7 @@ namespace Apache.Ignite.Core.Cache
         /// The mean time to execute removes.
         /// </summary>
         /// <returns>
-        /// The time in �s.
+        /// The time in ms.
         /// </returns>
         float AverageRemoveTime { get; }
 
@@ -116,7 +116,7 @@ namespace Apache.Ignite.Core.Cache
         /// The mean time to execute tx commit.
         /// </summary>
         /// <returns>
-        /// The time in �s.
+        /// The time in ms.
         /// </returns>
         float AverageTxCommitTime { get; }
 
@@ -153,12 +153,68 @@ namespace Apache.Ignite.Core.Cache
         string CacheName { get; }
 
         /// <summary>
-        /// Gets number of entries that was swapped to disk.
+        /// The total number of get requests to the off-heap memory.
         /// </summary>
         /// <returns>
-        /// Number of entries that was swapped to disk.
+        /// The number of gets.
         /// </returns>
-        long OverflowSize { get; }
+        long OffHeapGets { get; }
+
+        /// <summary>
+        /// The total number of put requests to the off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// The number of puts.
+        /// </returns>
+        long OffHeapPuts { get; }
+
+        /// <summary>
+        /// The total number of removals from the off-heap memory. This does not include evictions.
+        /// </summary>
+        /// <returns>
+        /// The number of removals.
+        /// </returns>
+        long OffHeapRemovals { get; }
+
+        /// <summary>
+        /// The total number of evictions from the off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// The number of evictions.
+        /// </returns>
+        long OffHeapEvictions { get; }
+
+        /// <summary>
+        /// The number of get requests that were satisfied by the off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// The off-heap hits number.
+        /// </returns>
+        long OffHeapHits { get; }
+
+        /// <summary>
+        /// Gets the percentage of hits on off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// The percentage of hits on off-heap memory.
+        /// </returns>
+        float OffHeapHitPercentage { get; }
+
+        /// <summary>
+        /// A miss is a get request that is not satisfied by off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// The off-heap misses number.
+        /// </returns>
+        long OffHeapMisses { get; }
+
+        /// <summary>
+        /// Gets the percentage of misses on off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// The percentage of misses on off-heap memory.
+        /// </returns>
+        float OffHeapMissPercentage { get; }
 
         /// <summary>
         /// Gets number of entries stored in off-heap memory.
@@ -167,6 +223,22 @@ namespace Apache.Ignite.Core.Cache
         /// Number of entries stored in off-heap memory.
         /// </returns>
         long OffHeapEntriesCount { get; }
+
+        /// <summary>
+        /// Gets the number of primary entries stored in off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// Number of primary entries stored in off-heap memory.
+        /// </returns>
+        long OffHeapPrimaryEntriesCount { get; }
+
+        /// <summary>
+        /// Gets number of backup entries stored in off-heap memory.
+        /// </summary>
+        /// <returns>
+        /// Number of backup entries stored in off-heap memory.
+        /// </returns>
+        long OffHeapBackupEntriesCount { get; }
 
         /// <summary>
         /// Gets memory size allocated in off-heap.
@@ -183,6 +255,14 @@ namespace Apache.Ignite.Core.Cache
         /// Number of non-null values in the cache.
         /// </returns>
         int Size { get; }
+
+        /// <summary>
+        /// Gets number of non-null values in the cache.
+        /// </summary>
+        /// <returns>
+        /// Number of non-null values in the cache.
+        /// </returns>
+        long CacheSize { get; }
 
         /// <summary>
         /// Gets number of keys in the cache, possibly with null values.
@@ -329,10 +409,10 @@ namespace Apache.Ignite.Core.Cache
         bool IsWriteBehindEnabled { get; }
 
         /// <summary>
-        /// Gets the maximum size of the write-behind buffer. When the count of unique keys in write buffer exceeds 
-        /// this value, the buffer is scheduled for write to the underlying store. 
-        /// <para /> 
-        /// If this value is 0, then flush is performed only on time-elapsing basis. 
+        /// Gets the maximum size of the write-behind buffer. When the count of unique keys in write buffer exceeds
+        /// this value, the buffer is scheduled for write to the underlying store.
+        /// <para />
+        /// If this value is 0, then flush is performed only on time-elapsing basis.
         /// </summary>
         /// <returns>
         /// Buffer size that triggers flush procedure.
@@ -348,8 +428,8 @@ namespace Apache.Ignite.Core.Cache
         int WriteBehindFlushThreadCount { get; }
 
         /// <summary>
-        /// Gets the cache flush frequency. All pending operations on the underlying store will be performed 
-        /// within time interval not less then this value. 
+        /// Gets the cache flush frequency. All pending operations on the underlying store will be performed
+        /// within time interval not less then this value.
         /// <para /> If this value is 0, then flush is performed only when buffer size exceeds flush size.
         /// </summary>
         /// <returns>
@@ -366,7 +446,7 @@ namespace Apache.Ignite.Core.Cache
         int WriteBehindStoreBatchSize { get; }
 
         /// <summary>
-        /// Gets count of write buffer overflow events since initialization. 
+        /// Gets count of write buffer overflow events since initialization.
         /// Each overflow event causes the ongoing flush operation to be performed synchronously.
         /// </summary>
         /// <returns>
@@ -375,7 +455,7 @@ namespace Apache.Ignite.Core.Cache
         int WriteBehindTotalCriticalOverflowCount { get; }
 
         /// <summary>
-        /// Gets count of write buffer overflow events in progress at the moment. 
+        /// Gets count of write buffer overflow events in progress at the moment.
         /// Each overflow event causes the ongoing flush operation to be performed synchronously.
         /// </summary>
         /// <returns>
@@ -384,8 +464,8 @@ namespace Apache.Ignite.Core.Cache
         int WriteBehindCriticalOverflowCount { get; }
 
         /// <summary>
-        /// Gets count of cache entries that are in a store-retry state. 
-        /// An entry is assigned a store-retry state when underlying store failed due some reason 
+        /// Gets count of cache entries that are in a store-retry state.
+        /// An entry is assigned a store-retry state when underlying store failed due some reason
         /// and cache has enough space to retain this entry till the next try.
         /// </summary>
         /// <returns>
@@ -394,7 +474,7 @@ namespace Apache.Ignite.Core.Cache
         int WriteBehindErrorRetryCount { get; }
 
         /// <summary>
-        /// Gets count of entries that were processed by the write-behind store 
+        /// Gets count of entries that were processed by the write-behind store
         /// and have not been flushed to the underlying store yet.
         /// </summary>
         /// <returns>
@@ -420,50 +500,50 @@ namespace Apache.Ignite.Core.Cache
 
         /// <summary>
         /// Whether storeByValue true or storeByReference false. When true, both keys and values are stored by value. 
-        /// <para /> 
-        /// When false, both keys and values are stored by reference. Caches stored by reference are capable of 
-        /// mutation by any threads holding the reference. 
-        /// The effects are: 
+        /// <para />
+        /// When false, both keys and values are stored by reference. Caches stored by reference are capable of
+        /// mutation by any threads holding the reference.
+        /// The effects are:
         /// - if the key is mutated, then the key may not be retrievable or removable
         /// - if the value is mutated, then all threads in the JVM can potentially observe those mutations, subject
         /// to the normal Java Memory Model rules.
-        /// Storage by reference only applies to the local heap. 
-        /// If an entry is moved off heap it will need to be transformed into a representation. 
-        /// Any mutations that occur after transformation may not be reflected in the cache. 
-        /// <para /> 
-        /// When a cache is storeByValue, any mutation to the key or value does not affect the key of value 
-        /// stored in the cache. 
-        /// <para /> 
+        /// Storage by reference only applies to the local heap.
+        /// If an entry is moved off heap it will need to be transformed into a representation.
+        /// Any mutations that occur after transformation may not be reflected in the cache.
+        /// <para />
+        /// When a cache is storeByValue, any mutation to the key or value does not affect the key of value
+        /// stored in the cache.
+        /// <para />
         /// The default value is true.
         /// </summary>
         /// <returns>
-        /// True if the cache is store by value
+        /// True if the cache is store by value.
         /// </returns>
         bool IsStoreByValue { get; }
 
         /// <summary>
-        /// Checks whether statistics collection is enabled in this cache. 
-        /// <para /> 
+        /// Checks whether statistics collection is enabled in this cache.
+        /// <para />
         /// The default value is false.
         /// </summary>
         /// <returns>
-        /// True if statistics collection is enabled
+        /// True if statistics collection is enabled.
         /// </returns>
         bool IsStatisticsEnabled { get; }
 
         /// <summary>
-        /// Checks whether management is enabled on this cache. 
-        /// <para /> 
+        /// Checks whether management is enabled on this cache.
+        /// <para />
         /// The default value is false.
         /// </summary>
         /// <returns>
-        /// True if management is enabled
+        /// True if management is enabled.
         /// </returns>
         bool IsManagementEnabled { get; }
 
         /// <summary>
-        /// Determines if a cache should operate in read-through mode. 
-        /// <para /> 
+        /// Determines if a cache should operate in read-through mode.
+        /// <para />
         /// The default value is false
         /// </summary>
         /// <returns>
@@ -472,15 +552,213 @@ namespace Apache.Ignite.Core.Cache
         bool IsReadThrough { get; }
 
         /// <summary>
-        /// Determines if a cache should operate in "write-through" mode. 
-        /// <para /> 
-        /// Will appropriately cause the configured CacheWriter to be invoked. 
-        /// <para /> 
+        /// Determines if a cache should operate in "write-through" mode.
+        /// <para />
+        /// Will appropriately cause the configured CacheWriter to be invoked.
+        /// <para />
         /// The default value is false
         /// </summary>
         /// <returns>
         /// True when a cache is in "write-through" mode.
         /// </returns>
         bool IsWriteThrough { get; }
+
+        /// <summary>
+        /// Checks whether cache topology is valid for read operations.
+        /// </summary>
+        /// <returns>
+        /// True when cache topology is valid for reading.
+        /// </returns>
+        bool IsValidForReading { get; }
+
+        /// <summary>
+        /// Checks whether cache topology is valid for write operations.
+        /// </summary>
+        /// <returns>
+        /// True when cache topology is valid for writing.
+        /// </returns>
+        bool IsValidForWriting { get; }
+
+        /// <summary>
+        /// Gets total number of partitions on current node.
+        /// </summary>
+        /// <returns>
+        /// Total number of partitions on current node.
+        /// </returns>
+        int TotalPartitionsCount { get; }
+
+        /// <summary>
+        /// Gets number of currently rebalancing partitions on current node.
+        /// </summary>
+        /// <returns>
+        /// Number of currently rebalancing partitions on current node.
+        /// </returns>
+        int RebalancingPartitionsCount { get; }
+
+        /// <summary>
+        /// Gets estimated number of keys to be rebalanced on current node.
+        /// </summary>
+        /// <returns>
+        /// Estimated number of keys to be rebalanced on current node.
+        /// </returns>
+        long KeysToRebalanceLeft { get; }
+
+        /// <summary>
+        /// Gets estimated rebalancing speed in keys.
+        /// </summary>
+        /// <returns>
+        /// Estimated rebalancing speed in keys.
+        /// </returns>
+        long RebalancingKeysRate { get; }
+
+        /// <summary>
+        /// Gets estimated rebalancing speed in bytes.
+        /// </summary>
+        /// <returns>
+        /// Estimated rebalancing speed in bytes.
+        /// </returns>
+        long RebalancingBytesRate { get; }
+
+        /// <summary>
+        /// Gets the number of cache entries in heap memory, including entries held by active transactions,
+        /// entries in onheap cache and near entries.
+        /// </summary>
+        /// <returns>
+        /// Number of entries in heap memory.
+        /// </returns>
+        long HeapEntriesCount { get; }
+
+        /// <summary>
+        /// Gets estimated rebalancing finish time.
+        /// entries in onheap cache and near entries.
+        /// </summary>
+        /// <returns>
+        /// Estimated rebalancing finish time.
+        /// </returns>
+        long EstimatedRebalancingFinishTime { get; }
+
+        /// <summary>
+        /// Gets rebalancing start time.
+        /// entries in onheap cache and near entries.
+        /// </summary>
+        /// <returns>
+        /// Rebalancing start time.
+        /// </returns>
+        long RebalancingStartTime { get; }
+
+        /// <summary>
+        /// Gets number of partitions.
+        /// need to be cleared before actual rebalance start.
+        /// </summary>
+        /// <returns>
+        /// Number of clearing partitions for rebalance.
+        /// </returns>
+        long RebalanceClearingPartitionsLeft { get; }
+
+        /// <summary>
+        /// Gets number of already rebalanced keys.
+        /// need to be cleared before actual rebalance start.
+        /// </summary>
+        /// <returns>
+        /// Number of already rebalanced keys.
+        /// </returns>
+        long RebalancedKeys { get; }
+
+        /// <summary>
+        /// Gets number of estimated keys to rebalance.
+        /// need to be cleared before actual rebalance start.
+        /// </summary>
+        /// <returns>
+        /// Number of estimated keys to rebalance.
+        /// </returns>
+        long EstimatedRebalancingKeys { get; }
+
+        /// <summary>
+        /// The total number of cache invocations, caused update.
+        /// </summary>
+        /// <returns>
+        /// The number of invocation updates.
+        /// </returns>
+        long EntryProcessorPuts { get; }
+
+        /// <summary>
+        /// The total number of cache invocations, caused removal.
+        /// </summary>
+        /// <returns>
+        /// The number of invocation removals.
+        /// </returns>
+        long EntryProcessorRemovals { get; }
+
+        /// <summary>
+        /// The total number of cache invocations, caused no updates.
+        /// </summary>
+        /// <returns>
+        /// The number of read-only invocations.
+        /// </returns>
+        long EntryProcessorReadOnlyInvocations { get; }
+
+        /// <summary>
+        /// The total number of cache invocations.
+        /// </summary>
+        /// <returns>
+        /// The number of cache invocations.
+        /// </returns>
+        long EntryProcessorInvocations { get; }
+
+        /// <summary>
+        /// The total number of invocations on keys, which exist in cache.
+        /// </summary>
+        /// <returns>
+        /// The number of cache invocation hits.
+        /// </returns>
+        long EntryProcessorHits { get; }
+
+        /// <summary>
+        /// The percentage of invocations on keys, which exist in cache.
+        /// </summary>
+        /// <returns>
+        /// The percentage of successful invocation hits.
+        /// </returns>
+        float EntryProcessorHitPercentage { get; }
+
+        /// <summary>
+        /// The total number of invocations on keys, which don't exist in cache.
+        /// </summary>
+        /// <returns>
+        /// The number of cache invocation misses.
+        /// </returns>
+        long EntryProcessorMisses { get; }
+
+        /// <summary>
+        /// The percentage of invocations on keys, which don't exist in cache.
+        /// </summary>
+        /// <returns>
+        /// The percentage of invocation misses.
+        /// </returns>
+        float EntryProcessorMissPercentage { get; }
+
+        /// <summary>
+        /// The mean time to execute cache invokes.
+        /// </summary>
+        /// <returns>
+        /// The time in µs.
+        /// </returns>
+        float EntryProcessorAverageInvocationTime { get; }
+
+        /// <summary>
+        /// So far, the minimum time to execute cache invokes.
+        /// </summary>
+        /// <returns>
+        /// The time in µs.
+        /// </returns>
+        float EntryProcessorMinInvocationTime { get; }
+
+        /// <summary>
+        /// So far, the maximum time to execute cache invokes.
+        /// </summary>
+        /// <returns>
+        /// The time in µs.
+        /// </returns>
+        float EntryProcessorMaxInvocationTime { get; }
     }
 }

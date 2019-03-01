@@ -63,6 +63,12 @@ namespace Apache.Ignite.Core.Compute
         ICompute WithNoFailover();
 
         /// <summary>
+        /// Disables caching for the next executed task in the current thread.
+        /// </summary>
+        /// <returns>This compute instance for chaining calls.</returns>
+        ICompute WithNoResultCache();
+
+        /// <summary>
         /// Sets task timeout for the next executed task on this projection in the current thread.
         /// When task starts execution, the timeout is reset, so one timeout is used only once.
         /// </summary>
@@ -577,7 +583,7 @@ namespace Apache.Ignite.Core.Compute
         /// </summary>
         /// <param name="clo">Job to run.</param>
         /// <param name="args">Job arguments.</param>
-        /// <returns>Сollection of job results.</returns>
+        /// <returns>Collection of job results.</returns>
         /// <typeparam name="TArg">Type of argument.</typeparam>
         /// <typeparam name="TRes">Type of job result.</typeparam>
         ICollection<TRes> Apply<TArg, TRes>(IComputeFunc<TArg, TRes> clo, IEnumerable<TArg> args);
@@ -589,7 +595,7 @@ namespace Apache.Ignite.Core.Compute
         /// </summary>
         /// <param name="clo">Job to run.</param>
         /// <param name="args">Job arguments.</param>
-        /// <returns>Сollection of job results.</returns>
+        /// <returns>Collection of job results.</returns>
         /// <typeparam name="TArg">Type of argument.</typeparam>
         /// <typeparam name="TRes">Type of job result.</typeparam>
         Task<ICollection<TRes>> ApplyAsync<TArg, TRes>(IComputeFunc<TArg, TRes> clo, IEnumerable<TArg> args);
@@ -605,7 +611,7 @@ namespace Apache.Ignite.Core.Compute
         /// <param name="args">Job arguments.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>
-        /// Сollection of job results.
+        /// Collection of job results.
         /// </returns>
         Task<ICollection<TRes>> ApplyAsync<TArg, TRes>(IComputeFunc<TArg, TRes> clo, IEnumerable<TArg> args,
             CancellationToken cancellationToken);

@@ -27,7 +27,6 @@ import org.apache.ignite.igfs.IgfsFile;
 import org.apache.ignite.igfs.IgfsPath;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteUuid;
 import org.jetbrains.annotations.Nullable;
 
@@ -66,6 +65,9 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
     /** Last modification time. */
     private long modificationTime;
 
+    /** Flags. */
+    private byte flags;
+
     /** Properties. */
     private Map<String, String> props;
 
@@ -81,6 +83,7 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
      * which is specified separately.
      *
      * @param igfsFile The file to copy.
+     * @param grpBlockSize Group block size.
      */
     public IgfsFileImpl(IgfsFile igfsFile, long grpBlockSize) {
         A.notNull(igfsFile, "igfsFile");
@@ -97,24 +100,28 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
 
         this.accessTime = igfsFile.accessTime();
         this.modificationTime = igfsFile.modificationTime();
+        this.flags = IgfsUtils.flags(igfsFile.isDirectory(), igfsFile.isFile());
     }
 
     /**
      * Constructs directory info.
      *
      * @param path Path.
+     * @param info Entry info.
+     * @param globalGrpBlockSize Global group block size.
      */
     public IgfsFileImpl(IgfsPath path, IgfsEntryInfo info, long globalGrpBlockSize) {
         A.notNull(path, "path");
         A.notNull(info, "info");
 
         this.path = path;
+
         fileId = info.id();
+
+        flags = IgfsUtils.flags(info.isDirectory(), info.isFile());
 
         if (info.isFile()) {
             blockSize = info.blockSize();
-
-            assert blockSize > 0; // By contract file must have blockSize > 0, while directory's blockSize == 0.
 
             len = info.length();
 
@@ -145,12 +152,12 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
 
     /** {@inheritDoc} */
     @Override public boolean isFile() {
-        return blockSize > 0;
+        return IgfsUtils.isFile(flags);
     }
 
     /** {@inheritDoc} */
     @Override public boolean isDirectory() {
-        return blockSize == 0;
+        return IgfsUtils.isDirectory(flags);
     }
 
     /** {@inheritDoc} */
@@ -211,9 +218,10 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
         out.writeInt(blockSize);
         out.writeLong(grpBlockSize);
         out.writeLong(len);
-        U.writeStringMap(out, props);
+        IgfsUtils.writeStringMap(out, props);
         out.writeLong(accessTime);
         out.writeLong(modificationTime);
+        out.writeByte(flags);
     }
 
     /**
@@ -222,16 +230,14 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
      * @param in Data input.
      */
     @Override public void readExternal(ObjectInput in) throws IOException {
-        path = new IgfsPath();
-
-        path.readExternal(in);
-
+        path = IgfsUtils.readPath(in);
         blockSize = in.readInt();
         grpBlockSize = in.readLong();
         len = in.readLong();
-        props = U.readStringMap(in);
+        props = IgfsUtils.readStringMap(in);
         accessTime = in.readLong();
         modificationTime = in.readLong();
+        flags = in.readByte();
     }
 
     /** {@inheritDoc} */
@@ -245,6 +251,7 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
         IgfsUtils.writeProperties(rawWriter, props);
         rawWriter.writeLong(accessTime);
         rawWriter.writeLong(modificationTime);
+        rawWriter.writeByte(flags);
     }
 
     /** {@inheritDoc} */
@@ -258,6 +265,7 @@ public final class IgfsFileImpl implements IgfsFile, Externalizable, Binarylizab
         props = IgfsUtils.readProperties(rawReader);
         accessTime = rawReader.readLong();
         modificationTime = rawReader.readLong();
+        flags = rawReader.readByte();
     }
 
     /** {@inheritDoc} */

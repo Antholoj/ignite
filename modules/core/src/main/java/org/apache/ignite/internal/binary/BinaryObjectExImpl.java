@@ -18,16 +18,21 @@
 package org.apache.ignite.internal.binary;
 
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
+import java.util.Map;
 import org.apache.ignite.IgniteException;
+import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
-import org.apache.ignite.internal.binary.builder.BinaryObjectBuilderImpl;
-import org.apache.ignite.internal.util.offheap.unsafe.GridUnsafeMemory;
-import org.apache.ignite.internal.util.typedef.internal.SB;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.binary.BinaryType;
-import org.apache.ignite.binary.BinaryObject;
+import org.apache.ignite.internal.binary.builder.BinaryObjectBuilderImpl;
+import org.apache.ignite.internal.util.typedef.internal.S;
+import org.apache.ignite.internal.util.typedef.internal.SB;
+import org.apache.ignite.lang.IgniteUuid;
+import org.apache.ignite.thread.IgniteThread;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -47,7 +52,7 @@ public abstract class BinaryObjectExImpl implements BinaryObjectEx {
     /**
      * @return {@code True} if object is array based.
      */
-    protected abstract boolean hasArray();
+    public abstract boolean hasArray();
 
     /**
      * @return Object array if object is array based, otherwise {@code null}.
@@ -73,13 +78,48 @@ public abstract class BinaryObjectExImpl implements BinaryObjectEx {
         throw new BinaryObjectException("Object is not enum.");
     }
 
+    /** {@inheritDoc} */
+    @Override public String enumName() throws BinaryObjectException {
+        throw new BinaryObjectException("Object is not enum.");
+    }
+
+    /**
+     * Get offset of data begin.
+     *
+     * @return Field value.
+     */
+    public abstract int dataStartOffset();
+
+    /**
+     * Get offset of the footer begin.
+     *
+     * @return Field value.
+     */
+    public abstract int footerStartOffset();
+
     /**
      * Get field by offset.
      *
-     * @param fieldOffset Field offset.
+     * @param order Field offset.
      * @return Field value.
      */
-    @Nullable protected abstract <F> F fieldByOrder(int fieldOffset);
+    @Nullable public abstract <F> F fieldByOrder(int order);
+
+    /**
+     * Create field comparator.
+     *
+     * @return Comparator.
+     */
+    public abstract BinarySerializedFieldComparator createFieldComparator();
+
+    /**
+     * Writes field value defined by the given field offset to the given byte buffer.
+     *
+     * @param fieldOffset Field offset.
+     * @return Boolean flag indicating whether the field was successfully written to the buffer, {@code false}
+     *      if there is no enough space for the field in the buffer.
+     */
+    protected abstract boolean writeFieldByOrder(int fieldOffset, ByteBuffer buf);
 
     /**
      * @param ctx Reader context.
@@ -89,18 +129,30 @@ public abstract class BinaryObjectExImpl implements BinaryObjectEx {
     @Nullable protected abstract <F> F field(BinaryReaderHandles ctx, String fieldName);
 
     /**
+     * @return {@code True} if object has schema.
+     */
+    public abstract boolean hasSchema();
+
+    /**
      * Get schema ID.
      *
      * @return Schema ID.
      */
-    protected abstract int schemaId();
+    public abstract int schemaId();
 
     /**
      * Create schema for object.
      *
      * @return Schema.
      */
-    protected abstract BinarySchema createSchema();
+    public abstract BinarySchema createSchema();
+
+    /**
+     * Get binary context.
+     *
+     * @return Binary context.
+     */
+    public abstract BinaryContext context();
 
     /** {@inheritDoc} */
     @Override public BinaryObjectBuilder toBuilder() throws BinaryObjectException {
@@ -113,133 +165,16 @@ public abstract class BinaryObjectExImpl implements BinaryObjectEx {
     }
 
     /** {@inheritDoc} */
-    public boolean equals(Object other) {
+    @Override public boolean equals(Object other) {
         if (other == this)
             return true;
 
-        if (other == null)
+        if (!(other instanceof BinaryObject))
             return false;
 
-        if (!(other instanceof BinaryObjectExImpl))
-            return false;
+        BinaryIdentityResolver identity = context().identity(typeId());
 
-        BinaryObjectExImpl otherPo = (BinaryObjectExImpl)other;
-
-        if (length() != otherPo.length() || typeId() != otherPo.typeId())
-            return false;
-
-        if (hasArray()) {
-            if (otherPo.hasArray()) {
-                int len = length();
-                int end = start() + len;
-
-                byte[] arr = array();
-                byte[] otherArr = otherPo.array();
-
-                for (int i = start(), j = otherPo.start(); i < end; i++, j++) {
-                    if (arr[i] != otherArr[j])
-                        return false;
-                }
-
-                return true;
-            }
-            else {
-                assert otherPo.offheapAddress() > 0;
-
-                return GridUnsafeMemory.compare(otherPo.offheapAddress() + otherPo.start(), array());
-            }
-        }
-        else {
-            assert offheapAddress() > 0;
-
-            if (otherPo.hasArray())
-                return GridUnsafeMemory.compare(offheapAddress() + start(), otherPo.array());
-            else {
-                assert otherPo.offheapAddress() > 0;
-
-                return GridUnsafeMemory.compare(offheapAddress() + start(),
-                    otherPo.offheapAddress() + otherPo.start(),
-                    length());
-            }
-        }
-    }
-
-    /**
-     * @param ctx Reader context.
-     * @param handles Handles for already traversed objects.
-     * @return String representation.
-     */
-    private String toString(BinaryReaderHandles ctx, IdentityHashMap<BinaryObject, Integer> handles) {
-        int idHash = System.identityHashCode(this);
-        int hash = hashCode();
-
-        BinaryType meta;
-
-        try {
-            meta = type();
-        }
-        catch (BinaryObjectException ignore) {
-            meta = null;
-        }
-
-        if (meta == null)
-            return BinaryObject.class.getSimpleName() +  " [idHash=" + idHash + ", hash=" + hash + ", typeId=" + typeId() + ']';
-
-        handles.put(this, idHash);
-
-        SB buf = new SB(meta.typeName());
-
-        if (meta.fieldNames() != null) {
-            buf.a(" [idHash=").a(idHash).a(", hash=").a(hash);
-
-            for (String name : meta.fieldNames()) {
-                Object val = field(ctx, name);
-
-                buf.a(", ").a(name).a('=');
-
-                if (val instanceof byte[])
-                    buf.a(Arrays.toString((byte[]) val));
-                else if (val instanceof short[])
-                    buf.a(Arrays.toString((short[])val));
-                else if (val instanceof int[])
-                    buf.a(Arrays.toString((int[])val));
-                else if (val instanceof long[])
-                    buf.a(Arrays.toString((long[])val));
-                else if (val instanceof float[])
-                    buf.a(Arrays.toString((float[])val));
-                else if (val instanceof double[])
-                    buf.a(Arrays.toString((double[])val));
-                else if (val instanceof char[])
-                    buf.a(Arrays.toString((char[])val));
-                else if (val instanceof boolean[])
-                    buf.a(Arrays.toString((boolean[]) val));
-                else if (val instanceof BigDecimal[])
-                    buf.a(Arrays.toString((BigDecimal[])val));
-                else {
-                    if (val instanceof BinaryObjectExImpl) {
-                        BinaryObjectExImpl po = (BinaryObjectExImpl)val;
-
-                        Integer idHash0 = handles.get(val);
-
-                        if (idHash0 != null) {  // Circular reference.
-                            BinaryType meta0 = po.type();
-
-                            assert meta0 != null;
-
-                            buf.a(meta0.typeName()).a(" [hash=").a(idHash0).a(", ...]");
-                        }
-                        else
-                            buf.a(po.toString(ctx, handles));
-                    }
-                    else
-                        buf.a(val);
-                }
-            }
-
-            buf.a(']');
-        }
-
-        return buf.toString();
+        return identity.equals(this, (BinaryObject)other);
     }
 
     /** {@inheritDoc} */
@@ -254,5 +189,217 @@ public abstract class BinaryObjectExImpl implements BinaryObjectEx {
         catch (BinaryObjectException e) {
             throw new IgniteException("Failed to create string representation of binary object.", e);
         }
+    }
+
+    /**
+     * @param ctx Reader context.
+     * @param handles Handles for already traversed objects.
+     * @return String representation.
+     */
+    private String toString(BinaryReaderHandles ctx, IdentityHashMap<BinaryObject, Integer> handles) {
+        int idHash = System.identityHashCode(this);
+        int hash = hashCode();
+
+        BinaryType meta;
+
+        IgniteThread.onForbidBinaryMetadataRequestSectionEntered();
+
+        try {
+            meta = rawType();
+        }
+        catch (BinaryObjectException ignore) {
+            meta = null;
+        }
+        finally {
+            IgniteThread.onForbidBinaryMetadataRequestSectionLeft();
+        }
+
+        if (meta == null || !S.INCLUDE_SENSITIVE)
+            return S.toString(S.INCLUDE_SENSITIVE ? BinaryObject.class.getSimpleName() : "BinaryObject",
+                "idHash", idHash, false,
+                "hash", hash, false,
+                "typeId", typeId(), true);
+
+        handles.put(this, idHash);
+
+        SB buf = new SB(meta.typeName());
+
+        if (meta.fieldNames() != null) {
+            buf.a(" [idHash=").a(idHash).a(", hash=").a(hash);
+
+            for (String name : meta.fieldNames()) {
+                Object val = field(ctx, name);
+
+                buf.a(", ").a(name).a('=');
+
+                appendValue(val, buf, ctx, handles);
+            }
+
+            buf.a(']');
+        }
+
+        return buf.toString();
+    }
+
+    /**
+     * @param val Value to append.
+     * @param buf Buffer to append to.
+     * @param ctx Reader context.
+     * @param handles Handles for already traversed objects.
+     */
+    private void appendValue(Object val, SB buf, BinaryReaderHandles ctx,
+        IdentityHashMap<BinaryObject, Integer> handles) {
+        if (val instanceof byte[])
+            buf.a(Arrays.toString((byte[])val));
+        else if (val instanceof short[])
+            buf.a(Arrays.toString((short[])val));
+        else if (val instanceof int[])
+            buf.a(Arrays.toString((int[])val));
+        else if (val instanceof long[])
+            buf.a(Arrays.toString((long[])val));
+        else if (val instanceof float[])
+            buf.a(Arrays.toString((float[])val));
+        else if (val instanceof double[])
+            buf.a(Arrays.toString((double[])val));
+        else if (val instanceof char[])
+            buf.a(Arrays.toString((char[])val));
+        else if (val instanceof boolean[])
+            buf.a(Arrays.toString((boolean[])val));
+        else if (val instanceof BigDecimal[])
+            buf.a(Arrays.toString((BigDecimal[])val));
+        else if (val instanceof IgniteUuid)
+            buf.a(val);
+        else if (val instanceof BinaryObjectExImpl) {
+            BinaryObjectExImpl po = (BinaryObjectExImpl)val;
+
+            Integer idHash0 = handles.get(val);
+
+            if (idHash0 != null) {  // Circular reference.
+                BinaryType meta0 = po.rawType();
+
+                assert meta0 != null;
+
+                buf.a(meta0.typeName()).a(" [hash=").a(idHash0).a(", ...]");
+            }
+            else
+                buf.a(po.toString(ctx, handles));
+        }
+        else if (val instanceof Object[]) {
+            Object[] arr = (Object[])val;
+
+            buf.a('[');
+
+            for (int i = 0; i < arr.length; i++) {
+                Object o = arr[i];
+
+                appendValue(o, buf, ctx, handles);
+
+                if (i < arr.length - 1)
+                    buf.a(", ");
+            }
+        }
+        else if (val instanceof Iterable) {
+            Iterable<Object> col = (Iterable<Object>)val;
+
+            buf.a(col.getClass().getSimpleName()).a(" {");
+
+            Iterator it = col.iterator();
+
+            while (it.hasNext()) {
+                Object o = it.next();
+
+                appendValue(o, buf, ctx, handles);
+
+                if (it.hasNext())
+                    buf.a(", ");
+            }
+
+            buf.a('}');
+        }
+        else if (val instanceof Map) {
+            Map<Object, Object> map = (Map<Object, Object>)val;
+
+            buf.a(map.getClass().getSimpleName()).a(" {");
+
+            Iterator<Map.Entry<Object, Object>> it = map.entrySet().iterator();
+
+            while (it.hasNext()) {
+                Map.Entry<Object, Object> e = it.next();
+
+                appendValue(e.getKey(), buf, ctx, handles);
+
+                buf.a('=');
+
+                appendValue(e.getValue(), buf, ctx, handles);
+
+                if (it.hasNext())
+                    buf.a(", ");
+            }
+
+            buf.a('}');
+        }
+        else
+            buf.a(val);
+    }
+
+    /**
+     * Check if object graph has circular references.
+     *
+     * @return {@code true} if object has circular references.
+     */
+    public boolean hasCircularReferences() {
+        try {
+            BinaryReaderHandles ctx = new BinaryReaderHandles();
+
+            ctx.put(start(), this);
+
+            return hasCircularReferences(ctx, new IdentityHashMap<BinaryObject, Integer>());
+        }
+        catch (BinaryObjectException e) {
+            throw new IgniteException("Failed to check binary object for circular references", e);
+        }
+    }
+
+    /**
+     * @param ctx Reader context.
+     * @param handles Handles for already traversed objects.
+     * @return {@code true} if has circular reference.
+     */
+    private boolean hasCircularReferences(BinaryReaderHandles ctx, IdentityHashMap<BinaryObject, Integer> handles) {
+        BinaryType meta;
+
+        try {
+            meta = rawType();
+        }
+        catch (BinaryObjectException ignore) {
+            meta = null;
+        }
+
+        if (meta == null)
+            return false;
+
+        int idHash = System.identityHashCode(this);
+
+        handles.put(this, idHash);
+
+        if (meta.fieldNames() != null) {
+            ctx.put(start(), this);
+
+            for (String name : meta.fieldNames()) {
+                Object val = field(ctx, name);
+
+                if (val instanceof BinaryObjectExImpl) {
+                    BinaryObjectExImpl po = (BinaryObjectExImpl)val;
+
+                    Integer idHash0 = handles.get(val);
+
+                    // Check for circular reference.
+                    if (idHash0 != null || po.hasCircularReferences(ctx, handles))
+                        return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

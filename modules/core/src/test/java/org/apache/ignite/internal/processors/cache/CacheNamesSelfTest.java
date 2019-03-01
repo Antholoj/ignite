@@ -23,6 +23,7 @@ import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 /**
  * Test that validates {@link Ignite#cacheNames()} implementation.
@@ -32,18 +33,18 @@ public class CacheNamesSelfTest extends GridCommonAbstractTest {
     private boolean client;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
-        CacheConfiguration cacheCfg1 = new CacheConfiguration();
+        CacheConfiguration cacheCfg1 = new CacheConfiguration(DEFAULT_CACHE_NAME);
         cacheCfg1.setCacheMode(CacheMode.REPLICATED);
         cacheCfg1.setName("replicated");
 
-        CacheConfiguration cacheCfg2 = new CacheConfiguration();
+        CacheConfiguration cacheCfg2 = new CacheConfiguration(DEFAULT_CACHE_NAME);
         cacheCfg2.setCacheMode(CacheMode.PARTITIONED);
         cacheCfg2.setName("partitioned");
 
-        CacheConfiguration cacheCfg3 = new CacheConfiguration();
+        CacheConfiguration cacheCfg3 = new CacheConfiguration(DEFAULT_CACHE_NAME);
         cacheCfg3.setCacheMode(CacheMode.LOCAL);
 
         if (client)
@@ -57,6 +58,7 @@ public class CacheNamesSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception In case of failure.
      */
+    @Test
     public void testCacheNames() throws Exception {
         try {
             startGridsMultiThreaded(2);
@@ -66,7 +68,7 @@ public class CacheNamesSelfTest extends GridCommonAbstractTest {
             assertEquals(3, names.size());
 
             for (String name : names)
-                assertTrue(name == null || name.equals("replicated") || name.equals("partitioned"));
+                assertTrue(DEFAULT_CACHE_NAME.equals(name) || name.equals("replicated") || name.equals("partitioned"));
 
             client = true;
 

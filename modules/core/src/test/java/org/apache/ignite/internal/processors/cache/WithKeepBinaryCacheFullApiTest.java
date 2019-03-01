@@ -31,10 +31,12 @@ import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.cache.CacheEntry;
 import org.apache.ignite.cache.CacheEntryProcessor;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.junits.IgniteCacheConfigVariationsAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionConcurrency;
 import org.apache.ignite.transactions.TransactionIsolation;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.testframework.junits.IgniteConfigVariationsAbstractTest.DataMode.PLANE_OBJECT;
@@ -109,7 +111,6 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
     };
 
     /** {@inheritDoc} */
-    @SuppressWarnings("unchecked")
     @Override protected CacheConfiguration cacheConfiguration() {
         CacheConfiguration cc = super.cacheConfiguration();
 
@@ -122,6 +123,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testRemovePutGet() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
@@ -177,10 +179,11 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testRemovePutGetAsync() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
-                final IgniteCache cache = jcache().withKeepBinary().withAsync();
+                final IgniteCache cache = jcache().withKeepBinary();
 
                 final Set keys = new LinkedHashSet() {{
                     for (int i = 0; i < CNT; i++)
@@ -189,22 +192,17 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
                 runInAllTxModes(new TestRunnable() {
                     @Override public void run() throws Exception {
-                        for (Object key : keys) {
-                            cache.remove(key);
-
-                            cache.future().get();
-                        }
+                        for (Object key : keys)
+                            cache.removeAsync(key).get();
                     }
                 });
 
                 runInAllTxModes(new TestRunnable() {
                     @Override public void run() throws Exception {
                         for (Object key : keys) {
-                            cache.get(key);
-                            assertNull(cache.future().get());
+                            assertNull(cache.getAsync(key).get());
 
-                            cache.getEntry(key);
-                            assertNull(cache.future().get());
+                            assertNull(cache.getEntryAsync(key).get());
                         }
                     }
                 });
@@ -215,17 +213,14 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                         @Override public void run() throws Exception {
                             Object val = value(valueOf(key));
 
-                            cache.put(key, val);
+                            cache.putAsync(key, val).get();
 
-                            cache.future().get();
-
-                            cache.get(key);
-                            BinaryObject retVal = (BinaryObject)cache.future().get();
+                            BinaryObject retVal = (BinaryObject)cache.getAsync(key).get();
 
                             assertEquals(val, retVal.deserialize());
 
-                            cache.getEntry(key);
-                            CacheEntry<BinaryObject, BinaryObject> e = (CacheEntry<BinaryObject, BinaryObject>)cache.future().get();
+                            CacheEntry<BinaryObject, BinaryObject> e =
+                                (CacheEntry<BinaryObject, BinaryObject>)cache.getEntryAsync(key).get();
 
                             assertEquals(key, deserializeBinary(e.getKey()));
 
@@ -241,6 +236,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testPutAllGetAll() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
@@ -308,10 +304,11 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testPutAllGetAllAsync() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
-                final IgniteCache cache = jcache().withKeepBinary().withAsync();
+                final IgniteCache cache = jcache().withKeepBinary();
 
                 final Set keys = new LinkedHashSet() {{
                     for (int i = 0; i < CNT; i++)
@@ -320,8 +317,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
                 runInAllTxModes(new TestRunnable() {
                     @Override public void run() throws Exception {
-                        cache.getAll(keys);
-                        Map res = (Map)cache.future().get();
+                        Map res = (Map)cache.getAllAsync(keys).get();
 
                         for (Object val : res.values())
                             assertNull(val);
@@ -330,9 +326,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
                 runInAllTxModes(new TestRunnable() {
                     @Override public void run() throws Exception {
-                        cache.<CacheEntry>getEntries(keys);
-
-                        Collection<CacheEntry> entries = (Collection<CacheEntry>)cache.future().get();
+                        Collection<CacheEntry> entries =
+                            (Collection<CacheEntry>)cache.<CacheEntry>getEntriesAsync(keys).get();
 
                         for (CacheEntry e : entries)
                             assertNull(e.getValue());
@@ -349,12 +344,10 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                             }
                         }};
 
-                        cache.putAll(keyValMap);
+                        cache.putAllAsync(keyValMap).get();
 
-                        cache.future().get();
-
-                        cache.getAll(keys);
-                        Set<Map.Entry<BinaryObject, BinaryObject>> set = ((Map)cache.future().get()).entrySet();
+                        Set<Map.Entry<BinaryObject, BinaryObject>> set =
+                            ((Map)cache.getAllAsync(keys).get()).entrySet();
 
                         for (Map.Entry<BinaryObject, BinaryObject> e : set) {
                             Object expVal = value(valueOf(e.getKey().deserialize()));
@@ -362,10 +355,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                             assertEquals(expVal, e.getValue().deserialize());
                         }
 
-                        cache.getEntries(keys);
-
                         Collection<CacheEntry<BinaryObject, BinaryObject>> entries =
-                            (Collection<CacheEntry<BinaryObject, BinaryObject>>)cache.future().get();
+                            (Collection<CacheEntry<BinaryObject, BinaryObject>>)cache.getEntriesAsync(keys).get();
 
                         for (CacheEntry<BinaryObject, BinaryObject> e : entries) {
                             assertTrue(e.getKey() instanceof BinaryObject);
@@ -375,9 +366,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                             assertEquals(expVal, e.getValue().deserialize());
                         }
 
-                        cache.removeAll(keys);
+                        cache.removeAllAsync(keys).get();
 
-                        cache.future().get();
                     }
                 });
             }
@@ -388,6 +378,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testInvoke() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
@@ -453,17 +444,14 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testInvokeTx() throws Exception {
         if (!txShouldBeUsed())
             return;
 
         for (TransactionConcurrency conc : TransactionConcurrency.values()) {
             for (TransactionIsolation isolation : TransactionIsolation.values()) {
-                // TODO IGNITE-2971: delete this if when the issue will be fixed.
-                if (conc == TransactionConcurrency.OPTIMISTIC && isolation == TransactionIsolation.SERIALIZABLE)
-                    continue;
-
-                info(">>>>> Executing test using explicite txs [concurrency=" + conc + ", isolation=" + isolation + "]");
+                info(">>>>> Executing test using explicit txs [concurrency=" + conc + ", isolation=" + isolation + "]");
 
                 checkInvokeTx(conc, isolation);
 
@@ -576,10 +564,11 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testInvokeAsync() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
-                final IgniteCache cache = jcache().withKeepBinary().withAsync();
+                final IgniteCache cache = jcache().withKeepBinary();
 
                 Set keys = new LinkedHashSet() {{
                     for (int i = 0; i < CNT; i++)
@@ -587,41 +576,27 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                 }};
 
                 for (final Object key : keys) {
-                    cache.invoke(key, NOOP_ENTRY_PROC);
-
-                    Object res = cache.future().get();
+                    Object res = cache.invokeAsync(key, NOOP_ENTRY_PROC).get();
 
                     assertNull(res);
 
-                    cache.get(key);
-
-                    assertNull(cache.future().get());
+                    assertNull(cache.getAsync(key).get());
                 }
 
                 for (final Object key : keys) {
-                    cache.invoke(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                    Object res = cache.future().get();
+                    Object res = cache.invokeAsync(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                     assertNull(res);
 
-                    cache.get(key);
+                    assertEquals(value(0), deserializeBinary(cache.getAsync(key).get()));
 
-                    assertEquals(value(0), deserializeBinary(cache.future().get()));
-
-                    cache.invoke(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                    res = cache.future().get();
+                    res = cache.invokeAsync(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                     assertEquals(value(0), deserializeBinary(res));
 
-                    cache.get(key);
+                    assertEquals(value(1), deserializeBinary(cache.getAsync(key).get()));
 
-                    assertEquals(value(1), deserializeBinary(cache.future().get()));
-
-                    cache.remove(key);
-
-                    assertTrue((Boolean)cache.future().get());
+                    assertTrue((Boolean)cache.removeAsync(key).get());
                 }
 
                 // TODO IGNITE-2973: should be always false.
@@ -629,30 +604,20 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
                 try {
                     for (final Object key : keys) {
-                        cache.invoke(key, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                        Object res = cache.future().get();
+                        Object res = cache.invokeAsync(key, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                         assertNull(res);
 
-                        cache.get(key);
+                        assertEquals(value(0), deserializeBinary(cache.getAsync(key).get()));
 
-                        assertEquals(value(0), deserializeBinary(cache.future().get()));
-
-                        cache.invoke(key, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                        res = cache.future().get();
+                        res = cache.invokeAsync(key, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                         // TODO IGNITE-2953: uncomment the following assert when the issue will be fixed.
 //                              assertEquals(value(0), res);
 
-                        cache.get(key);
+                        assertEquals(value(1), deserializeBinary(cache.getAsync(key).get()));
 
-                        assertEquals(value(1), deserializeBinary(cache.future().get()));
-
-                        cache.remove(key);
-
-                        assertTrue((Boolean)cache.future().get());
+                        assertTrue((Boolean)cache.removeAsync(key).get());
                     }
                 }
                 finally {
@@ -665,16 +630,13 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testInvokeAsyncTx() throws Exception {
         if (!txShouldBeUsed())
             return;
 
         for (TransactionConcurrency conc : TransactionConcurrency.values()) {
             for (TransactionIsolation isolation : TransactionIsolation.values()) {
-                // TODO IGNITE-2971: delete this if when the issue will be fixed.
-                if (conc == TransactionConcurrency.OPTIMISTIC && isolation == TransactionIsolation.SERIALIZABLE)
-                    continue;
-
                 checkInvokeAsyncTx(conc, isolation);
 
                 jcache().removeAll();
@@ -691,7 +653,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
     public void checkInvokeAsyncTx(final TransactionConcurrency conc, final TransactionIsolation isolation) throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
-                final IgniteCache cache = jcache().withKeepBinary().withAsync();
+                final IgniteCache cache = jcache().withKeepBinary();
 
                 Set keys = new LinkedHashSet() {{
                     for (int i = 0; i < CNT; i++)
@@ -700,15 +662,11 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
                 try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
                     for (final Object key : keys) {
-                        cache.invoke(key, NOOP_ENTRY_PROC);
-
-                        Object res = cache.future().get();
+                        Object res = cache.invokeAsync(key, NOOP_ENTRY_PROC).get();
 
                         assertNull(res);
 
-                        cache.get(key);
-
-                        assertNull(cache.future().get());
+                        assertNull(cache.getAsync(key).get());
                     }
 
                     tx.commit();
@@ -718,37 +676,31 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                     Object res;
 
                     try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                        cache.invoke(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                        res = cache.future().get();
+                        res = cache.invokeAsync(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                         tx.commit();
                     }
 
                     assertNull(res);
 
-                    cache.get(key);
+                    assertEquals(value(0), deserializeBinary(cache.getAsync(key).get()));
 
-                    assertEquals(value(0), deserializeBinary(cache.future().get()));
+                    IgniteFuture f;
 
                     try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                        cache.invoke(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
+                        f = cache.invokeAsync(key, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
 
                         tx.commit();
                     }
 
-                    res = cache.future().get();
+                    res = f.get();
 
                     assertEquals(value(0), deserializeBinary(res));
 
-                    cache.get(key);
-
-                    assertEquals(value(1), deserializeBinary(cache.future().get()));
+                    assertEquals(value(1), deserializeBinary(cache.getAsync(key).get()));
 
                     try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                        cache.remove(key);
-
-                        assertTrue((Boolean)cache.future().get());
+                        assertTrue((Boolean)cache.removeAsync(key).get());
 
                         tx.commit();
                     }
@@ -762,23 +714,17 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                         Object res;
 
                         try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                            cache.invoke(key, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                            res = cache.future().get();
+                            res = cache.invokeAsync(key, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                             tx.commit();
                         }
 
                         assertNull(res);
 
-                        cache.get(key);
-
-                        assertEquals(value(0), deserializeBinary(cache.future().get()));
+                        assertEquals(value(0), deserializeBinary(cache.getAsync(key).get()));
 
                         try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                            cache.invoke(key, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                            res = cache.future().get();
+                            res = cache.invokeAsync(key, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                             tx.commit();
                         }
@@ -786,14 +732,10 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                         // TODO IGNITE-2953: uncomment the following assert when the issue will be fixed.
 //                              assertEquals(value(0), res);
 
-                        cache.get(key);
-
-                        assertEquals(value(1), deserializeBinary(cache.future().get()));
+                        assertEquals(value(1), deserializeBinary(cache.getAsync(key).get()));
 
                         try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                            cache.remove(key);
-
-                            assertTrue((Boolean)cache.future().get());
+                            assertTrue((Boolean)cache.removeAsync(key).get());
 
                             tx.commit();
                         }
@@ -810,6 +752,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testInvokeAll() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
@@ -860,7 +803,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
     /**
      * @throws Exception If failed.
      */
-    @SuppressWarnings("serial")
+    @Test
     public void testInvokeAllTx() throws Exception {
         if (!txShouldBeUsed())
             return;
@@ -993,20 +936,19 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      * @throws Exception If failed.
      */
     @SuppressWarnings("serial")
+    @Test
     public void testInvokeAllAsync() throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
-                final IgniteCache cache = jcache().withKeepBinary().withAsync();
+                final IgniteCache cache = jcache().withKeepBinary();
 
                 final Set keys = new LinkedHashSet() {{
                     for (int i = 0; i < CNT; i++)
                         add(key(i));
                 }};
 
-                cache.invokeAll(keys, NOOP_ENTRY_PROC);
-
                 Map<Object, EntryProcessorResult<Object>> resMap =
-                    (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                    (Map<Object, EntryProcessorResult<Object>>)cache.invokeAllAsync(keys, NOOP_ENTRY_PROC).get();
 
                 for (Map.Entry<Object, EntryProcessorResult<Object>> e : resMap.entrySet()) {
                     assertTrue("Wrong key type, binary object expected: " + e.getKey(), e.getKey() instanceof BinaryObject);
@@ -1014,41 +956,33 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                     assertNull(e.getValue().get());
                 }
 
-                cache.invokeAll(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                resMap = (Map<Object, EntryProcessorResult<Object>>)
+                    cache.invokeAllAsync(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                 checkInvokeAllAsyncResult(cache, resMap, null, value(0), true);
 
-                cache.invokeAll(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                resMap = (Map<Object, EntryProcessorResult<Object>>)
+                    cache.invokeAllAsync(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                 checkInvokeAllAsyncResult(cache, resMap, value(0), value(1), true);
 
-                cache.removeAll(keys);
-
-                cache.future().get();
+                cache.removeAllAsync(keys).get();
 
                 // TODO IGNITE-2973: should be always false.
                 interceptorBinaryObjExp = atomicityMode() == TRANSACTIONAL;
 
                 try {
-                    cache.invokeAll(keys, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                    resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                    resMap = (Map<Object, EntryProcessorResult<Object>>)
+                        cache.invokeAllAsync(keys, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                     checkInvokeAllAsyncResult(cache, resMap, null, value(0), false);
 
-                    cache.invokeAll(keys, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                    resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                    resMap = (Map<Object, EntryProcessorResult<Object>>)
+                        cache.invokeAllAsync(keys, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                     checkInvokeAllAsyncResult(cache, resMap, value(0), value(1), false);
 
-                    cache.removeAll(keys);
-
-                    cache.future().get();
+                    cache.removeAllAsync(keys).get();
                 }
                 finally {
                     interceptorBinaryObjExp = true;
@@ -1060,7 +994,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
     /**
      * @throws Exception If failed.
      */
-    @SuppressWarnings("serial")
+    @Test
     public void testInvokeAllAsyncTx() throws Exception {
         if (!txShouldBeUsed())
             return;
@@ -1078,12 +1012,12 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
      *
      * @param conc Concurrency.
      * @param isolation Isolation.
-     * @throws Exception
+     * @throws Exception If failed.
      */
     private void checkInvokeAllAsycnTx(final TransactionConcurrency conc, final TransactionIsolation isolation) throws Exception {
         runInAllDataModes(new TestRunnable() {
             @Override public void run() throws Exception {
-                final IgniteCache cache = jcache().withKeepBinary().withAsync();
+                final IgniteCache cache = jcache().withKeepBinary();
 
                 final Set keys = new LinkedHashSet() {{
                     for (int i = 0; i < CNT; i++)
@@ -1093,9 +1027,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                 Map<Object, EntryProcessorResult<Object>> resMap;
 
                 try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                    cache.invokeAll(keys, NOOP_ENTRY_PROC);
-
-                    resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                    resMap = (Map<Object, EntryProcessorResult<Object>>)
+                        cache.invokeAllAsync(keys, NOOP_ENTRY_PROC).get();
 
                     tx.commit();
                 }
@@ -1107,9 +1040,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                 }
 
                 try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                    cache.invokeAll(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                    resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                    resMap = (Map<Object, EntryProcessorResult<Object>>)
+                        cache.invokeAllAsync(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                     tx.commit();
                 }
@@ -1117,9 +1049,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                 checkInvokeAllAsyncResult(cache, resMap, null, value(0), true);
 
                 try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                    cache.invokeAll(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode);
-
-                    resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                    resMap = (Map<Object, EntryProcessorResult<Object>>)
+                        cache.invokeAllAsync(keys, INC_ENTRY_PROC_BINARY_OBJ, dataMode).get();
 
                     tx.commit();
                 }
@@ -1127,9 +1058,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                 checkInvokeAllAsyncResult(cache, resMap, value(0), value(1), true);
 
                 try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                    cache.removeAll(keys);
-
-                    cache.future().get();
+                    cache.removeAllAsync(keys).get();
 
                     tx.commit();
                 }
@@ -1139,9 +1068,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
                 try {
                     try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                        cache.invokeAll(keys, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                        resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                        resMap = (Map<Object, EntryProcessorResult<Object>>)
+                            cache.invokeAllAsync(keys, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                         tx.commit();
                     }
@@ -1149,9 +1077,8 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                     checkInvokeAllAsyncResult(cache, resMap, null, value(0), false);
 
                     try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                        cache.invokeAll(keys, INC_ENTRY_PROC_USER_OBJ, dataMode);
-
-                        resMap = (Map<Object, EntryProcessorResult<Object>>)cache.future().get();
+                        resMap = (Map<Object, EntryProcessorResult<Object>>)
+                            cache.invokeAllAsync(keys, INC_ENTRY_PROC_USER_OBJ, dataMode).get();
 
                         tx.commit();
                     }
@@ -1159,9 +1086,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
                     checkInvokeAllAsyncResult(cache, resMap, value(0), value(1), false);
 
                     try (Transaction tx = testedGrid().transactions().txStart(conc, isolation)) {
-                        cache.removeAll(keys);
-
-                        cache.future().get();
+                        cache.removeAllAsync(keys).get();
 
                         tx.commit();
                     }
@@ -1193,9 +1118,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
             if (deserializeRes)
                 assertEquals(expRes, deserializeRes ? deserializeBinary(res) : res);
 
-            cache.get(e.getKey());
-
-            assertEquals(cacheVal, deserializeBinary(cache.future().get()));
+            assertEquals(cacheVal, deserializeBinary(cache.getAsync(e.getKey()).get()));
         }
     }
 
@@ -1211,6 +1134,7 @@ public class WithKeepBinaryCacheFullApiTest extends IgniteCacheConfigVariationsA
 
     /**
      * @param task Task.
+     * @throws Exception If failed.
      */
     protected void runInAllTxModes(TestRunnable task) throws Exception {
         info("Executing implicite tx");

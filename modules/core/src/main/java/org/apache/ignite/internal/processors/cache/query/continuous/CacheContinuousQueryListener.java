@@ -20,7 +20,9 @@ package org.apache.ignite.internal.processors.cache.query.continuous;
 import java.util.Map;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicUpdateFuture;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicAbstractUpdateFuture;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -41,7 +43,13 @@ public interface CacheContinuousQueryListener<K, V> {
      * @param fut Dht atomic future.
      */
     public void onEntryUpdated(CacheContinuousQueryEvent<K, V> evt, boolean primary,
-        boolean recordIgniteEvt, @Nullable GridDhtAtomicUpdateFuture fut);
+        boolean recordIgniteEvt, @Nullable GridDhtAtomicAbstractUpdateFuture fut);
+
+    /**
+     * Listener registration callback.
+     * NOTE: This method should be called under the {@link CacheGroupContext#listenerLock} write lock held.
+     */
+    public void onRegister();
 
     /**
      * Listener unregistered callback.
@@ -76,6 +84,25 @@ public interface CacheContinuousQueryListener<K, V> {
     public void skipUpdateEvent(CacheContinuousQueryEvent<K, V> evt, AffinityTopologyVersion topVer, boolean primary);
 
     /**
+     * For cache updates in shared cache group need notify others caches CQ listeners
+     * that generated counter should be skipped.
+     *
+     * @param cctx Cache context.
+     * @param skipCtx Context.
+     * @param part Partition.
+     * @param cntr Counter to skip.
+     * @param topVer Topology version.
+     * @return Context.
+     */
+    @Nullable public CounterSkipContext skipUpdateCounter(
+        GridCacheContext cctx,
+        @Nullable CounterSkipContext skipCtx,
+        int part,
+        long cntr,
+        AffinityTopologyVersion topVer,
+        boolean primary);
+
+    /**
      * @param part Partition.
      */
     public void onPartitionEvicted(int part);
@@ -94,4 +121,9 @@ public interface CacheContinuousQueryListener<K, V> {
      * @return Whether to notify on existing entries.
      */
     public boolean notifyExisting();
+
+    /**
+     * @return {@code True} if this listener should be called on events on primary partitions only.
+     */
+    public boolean isPrimaryOnly();
 }

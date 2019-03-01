@@ -49,7 +49,7 @@ public class IgniteTxRemoteSingleStateImpl extends IgniteTxRemoteStateAdapter {
 
     /** {@inheritDoc} */
     @Override public void addWriteEntry(IgniteTxKey key, IgniteTxEntry e) {
-        this.entry = e;
+        entry = e;
     }
 
     /** {@inheritDoc} */
@@ -124,7 +124,7 @@ public class IgniteTxRemoteSingleStateImpl extends IgniteTxRemoteStateAdapter {
     }
 
     /** {@inheritDoc} */
-    public String toString() {
+    @Override public String toString() {
         return S.toString(IgniteTxRemoteSingleStateImpl.class, this);
     }
 
@@ -141,5 +141,10 @@ public class IgniteTxRemoteSingleStateImpl extends IgniteTxRemoteStateAdapter {
         }
 
         return null;
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean mvccEnabled() {
+        return entry != null && entry.context().mvccEnabled();
     }
 }

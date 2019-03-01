@@ -90,6 +90,12 @@ namespace Apache.Ignite.Core.Impl.Transactions
         }
 
         /** <inheritDoc /> */
+        public string Label
+        {
+            get { return _tx.Label; } 
+        }
+
+        /** <inheritDoc /> */
         public bool IsRollbackOnly
         {
             get { return _tx.IsRollbackOnly; }
@@ -141,6 +147,14 @@ namespace Apache.Ignite.Core.Impl.Transactions
         public TV RemoveMeta<TV>(string name)
         {
             return _tx.RemoveMeta<TV>(name);
+        }
+
+        /// <summary>
+        /// Executes prepare step of the two phase commit.
+        /// </summary>
+        public void Prepare()
+        {
+            _tx.Prepare();
         }
     }
 }

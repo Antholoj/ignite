@@ -17,15 +17,15 @@
 
 package org.apache.ignite.internal.binary;
 
+import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.GridUnsafe;
-import org.eclipse.jetty.util.ConcurrentHashSet;
 
 /**
  * Field tests for heap-based binaries.
  */
 public class BinaryFieldsOffheapSelfTest extends BinaryFieldsAbstractSelfTest {
     /** Allocated unsafe pointer. */
-    private final ConcurrentHashSet<Long> ptrs = new ConcurrentHashSet<>();
+    private final GridConcurrentHashSet<Long> ptrs = new GridConcurrentHashSet<>();
 
     /** {@inheritDoc} */
     @Override protected void afterTest() throws Exception {
@@ -46,7 +46,7 @@ public class BinaryFieldsOffheapSelfTest extends BinaryFieldsAbstractSelfTest {
 
         ptrs.add(ptr);
 
-        GridUnsafe.copyMemory(arr, GridUnsafe.BYTE_ARR_OFF, null, ptr, arr.length);
+        GridUnsafe.copyHeapOffheap(arr, GridUnsafe.BYTE_ARR_OFF, ptr, arr.length);
 
         return new BinaryObjectOffheapImpl(binaryContext(marsh), ptr, 0, arr.length);
     }

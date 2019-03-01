@@ -85,10 +85,10 @@ public class IgniteSink extends AbstractSink implements Configurable {
     }
 
     /**
-     * Starts a grid and initializes na event transformer.
+     * Starts a grid and initializes an event transformer.
      */
     @SuppressWarnings("unchecked")
-    @Override synchronized public void start() {
+    @Override public synchronized void start() {
         A.notNull(springCfgPath, "Ignite config file");
         A.notNull(cacheName, "Cache name");
         A.notNull(eventTransformerCls, "Event transformer class");
@@ -109,8 +109,12 @@ public class IgniteSink extends AbstractSink implements Configurable {
         catch (Exception e) {
             log.error("Failed to start grid", e);
 
+            sinkCounter.incrementConnectionFailedCount();
+
             throw new FlumeException("Failed to start grid", e);
         }
+
+        sinkCounter.incrementConnectionCreatedCount();
 
         super.start();
     }
@@ -118,10 +122,11 @@ public class IgniteSink extends AbstractSink implements Configurable {
     /**
      * Stops the grid.
      */
-    @Override synchronized public void stop() {
+    @Override public synchronized void stop() {
         if (ignite != null)
             ignite.close();
 
+        sinkCounter.incrementConnectionClosedCount();
         sinkCounter.stop();
 
         super.stop();
@@ -173,7 +178,12 @@ public class IgniteSink extends AbstractSink implements Configurable {
         catch (Exception e) {
             log.error("Failed to process events", e);
 
-            transaction.rollback();
+            try {
+                transaction.rollback();
+            }
+            catch (Throwable e1) {
+                e.addSuppressed(e1);
+            }
 
             throw new EventDeliveryException(e);
         }

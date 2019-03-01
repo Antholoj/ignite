@@ -18,9 +18,9 @@
 package org.apache.ignite.osgi.classloaders;
 
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
-import org.jsr166.ConcurrentHashMap8;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.Constants;
 
@@ -32,7 +32,7 @@ import org.osgi.framework.Constants;
  */
 public class ContainerSweepClassLoader extends BundleDelegatingClassLoader {
     /** Classes resolved previously. */
-    private final ConcurrentMap<String, Bundle> resolved = new ConcurrentHashMap8<>();
+    private final ConcurrentMap<String, Bundle> resolved = new ConcurrentHashMap<>();
 
     /** Unresolvable classes. */
     private final Set<String> nonResolvable = new GridConcurrentHashSet<>();
@@ -77,7 +77,7 @@ public class ContainerSweepClassLoader extends BundleDelegatingClassLoader {
             cls = super.loadClass(name, resolve);
             return cls;
         }
-        catch (ClassNotFoundException e) {
+        catch (ClassNotFoundException ignored) {
             // Continue.
         }
 
@@ -119,7 +119,7 @@ public class ContainerSweepClassLoader extends BundleDelegatingClassLoader {
                 cls = b.loadClass(name);
                 break;
             }
-            catch (ClassNotFoundException e) {
+            catch (ClassNotFoundException ignored) {
                 // No-op.
             }
         }

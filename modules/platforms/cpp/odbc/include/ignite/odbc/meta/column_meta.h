@@ -23,6 +23,7 @@
 
 #include "ignite/impl/binary/binary_reader_impl.h"
 
+#include "ignite/odbc/protocol_version.h"
 #include "ignite/odbc/common_types.h"
 #include "ignite/odbc/utility.h"
 
@@ -32,13 +33,14 @@ namespace ignite
     {
         namespace meta
         {
+            using namespace ignite::odbc;
+
             /**
              * Column metadata.
              */
             class ColumnMeta
             {
             public:
-#ifdef ODBC_DEBUG
                 /**
                  * Convert attribute ID to string containing its name.
                  * Debug function.
@@ -46,7 +48,6 @@ namespace ignite
                  * @return Null-terminated string containing attribute name.
                  */
                 static const char* AttrIdToString(uint16_t id);
-#endif
 
                 /**
                  * Default constructor.
@@ -67,7 +68,8 @@ namespace ignite
                  */
                 ColumnMeta(const std::string& schemaName, const std::string& tableName,
                            const std::string& columnName, int8_t dataType) :
-                    schemaName(schemaName), tableName(tableName), columnName(columnName), dataType(dataType)
+                    schemaName(schemaName), tableName(tableName), columnName(columnName), dataType(dataType),
+                    precision(-1), scale(-1)
                 {
                     // No-op.
                 }
@@ -87,7 +89,9 @@ namespace ignite
                     schemaName(other.schemaName),
                     tableName(other.tableName),
                     columnName(other.columnName),
-                    dataType(other.dataType)
+                    dataType(other.dataType),
+                    precision(other.precision),
+                    scale(other.scale)
                 {
                     // No-op.
                 }
@@ -101,6 +105,8 @@ namespace ignite
                     tableName = other.tableName;
                     columnName = other.columnName;
                     dataType = other.dataType;
+                    precision = other.precision;
+                    scale = other.scale;
 
                     return *this;
                 }
@@ -108,8 +114,9 @@ namespace ignite
                 /**
                  * Read using reader.
                  * @param reader Reader.
+                 * @param ver Server version.
                  */
-                void Read(ignite::impl::binary::BinaryReaderImpl& reader);
+                void Read(ignite::impl::binary::BinaryReaderImpl& reader, const ProtocolVersion& ver);
 
                 /**
                  * Get schema name.
@@ -142,9 +149,27 @@ namespace ignite
                  * Get data type.
                  * @return Data type.
                  */
-                int8_t GetDataType() const 
+                int8_t GetDataType() const
                 {
                     return dataType;
+                }
+
+                /**
+                 * Get column precision.
+                 * @return Column precision.
+                 */
+                const int32_t GetPrecision() const
+                {
+                    return precision;
+                }
+
+                /**
+                 * Get column scale.
+                 * @return Column scale.
+                 */
+                const int32_t GetScale() const
+                {
+                    return scale;
                 }
 
                 /**
@@ -177,6 +202,12 @@ namespace ignite
 
                 /** Data type. */
                 int8_t dataType;
+
+                /** Column precision. */
+                int32_t precision;
+
+                /** Column scale. */
+                int32_t scale;
             };
 
             /** Column metadata vector alias. */
@@ -186,8 +217,10 @@ namespace ignite
              * Read columns metadata collection.
              * @param reader Reader.
              * @param meta Collection.
+             * @param ver Server protocol version.
              */
-            void ReadColumnMetaVector(ignite::impl::binary::BinaryReaderImpl& reader, ColumnMetaVector& meta);
+            void ReadColumnMetaVector(ignite::impl::binary::BinaryReaderImpl& reader, ColumnMetaVector& meta,
+                    const ProtocolVersion& ver);
         }
     }
 }

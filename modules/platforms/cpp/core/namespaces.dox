@@ -18,44 +18,72 @@
 /**
  * \mainpage Apache Ignite C++
  *
- * Apache Ignite In-Memory Data Fabric is a high-performance, integrated and distributed in-memory platform for
+ * Apache Ignite In-Memory Database and Caching Platformis a high-performance, integrated and distributed in-memory platform for
  * computing and transacting on large-scale data sets in real-time, orders of magnitude faster than possible with
  * traditional disk-based or flash-based technologies.
  */
- 
+
  /**
   * Apache %Ignite API.
   */
- namespace ignite
- {
-	 /**
-	  * %Ignite Binary Objects API.
-	  */
-	 namespace binary
-	 {
-		 // Empty.
-	 }
+namespace ignite
+{
+    /**
+     * %Ignite Binary Objects API.
+     */
+    namespace binary
+    {
+        // Empty.
+    }
 
-	 /**
-	  * %Ignite Transaction API.
-	  */
-	 namespace transactions
-	 {
-		 // Empty.
-	 }
-	 
-	 /**
-	  * %Ignite %Cache API.
-	  */
-	 namespace cache
-	 {
-		 /**
-		  * Contains APIs for creating and executing cache queries.
-		  */
-		 namespace query
-		 {
-			 // Empty.
-		 }
-	 }
- }
- 
+    /**
+     * %Ignite %Transaction API.
+     */
+    namespace transactions
+    {
+        // Empty.
+    }
+
+    /**
+     * %Ignite %Cache API.
+     */
+    namespace cache
+    {
+        /**
+         * Contains APIs for cache events.
+         */
+        namespace event
+        {
+            // Empty.
+        }
+
+        /**
+         * Contains APIs for creating and executing cache queries.
+         */
+        namespace query
+        {
+            /**
+             * Contains APIs for continuous queries.
+             */
+            namespace continuous
+            {
+                // Empty.
+            }
+        }
+    }
+
+    /**
+     * %Ignite Thin Client API.
+     */
+    namespace thin
+    {
+        /**
+         * %Ignite Thin Client Cache API.
+         */
+        namespace cache
+        {
+            // Empty.
+        }
+    }
+}
+

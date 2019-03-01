@@ -19,9 +19,10 @@ package org.apache.ignite.cache.store.jdbc;
 
 import org.apache.ignite.marshaller.Marshaller;
 import org.apache.ignite.internal.binary.BinaryMarshaller;
+import org.junit.Test;
 
 /**
- * Class for {@code PojoCacheStore} tests.
+ * Test for {@link CacheJdbcPojoStore} with binary marshaller.
  */
 public class CacheJdbcPojoStoreBinaryMarshallerSelfTest extends CacheJdbcPojoStoreAbstractSelfTest {
     /** {@inheritDoc} */
@@ -32,54 +33,60 @@ public class CacheJdbcPojoStoreBinaryMarshallerSelfTest extends CacheJdbcPojoSto
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLoadCacheNoKeyClasses() throws Exception {
-        startTestGrid(false, true, false, false);
+        startTestGrid(false, true, false, false, 512);
 
-        checkCacheContent();
+        checkCacheLoad();
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLoadCacheNoKeyClassesTx() throws Exception {
-        startTestGrid(false, true, false, true);
+        startTestGrid(false, true, false, true, 512);
 
-        checkCacheContent();
+        checkCacheLoad();
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLoadCacheNoValueClasses() throws Exception {
-        startTestGrid(false, false, true, false);
+        startTestGrid(false, false, true, false, 512);
 
-        checkCacheContent();
+        checkCacheLoad();
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLoadCacheNoValueClassesTx() throws Exception {
-        startTestGrid(false, false, true, true);
+        startTestGrid(false, false, true, true, 512);
 
-        checkCacheContent();
+        checkCacheLoad();
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLoadCacheNoKeyAndValueClasses() throws Exception {
-        startTestGrid(false, true, true, false);
+        startTestGrid(false, true, true, false, 512);
 
-        checkCacheContent();
+        checkCacheLoad();
     }
 
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testLoadCacheNoKeyAndValueClassesTx() throws Exception {
-        startTestGrid(false, true, true, true);
+        startTestGrid(false, true, true, true, 512);
 
-        checkCacheContent();
+        checkCacheLoad();
     }
 }

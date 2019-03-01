@@ -17,7 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.transactions;
 
-import java.util.concurrent.ConcurrentMap;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +26,7 @@ import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.configuration.NearCacheConfiguration;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -35,6 +36,8 @@ import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionDeadlockException;
 import org.apache.ignite.transactions.TransactionTimeoutException;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Test;
 
 import static org.apache.ignite.internal.util.typedef.X.hasCause;
 import static org.apache.ignite.transactions.TransactionConcurrency.PESSIMISTIC;
@@ -48,9 +51,8 @@ public class TxPessimisticDeadlockDetectionCrossCacheTest extends GridCommonAbst
     private static final int NODES_CNT = 2;
 
     /** {@inheritDoc} */
-    @SuppressWarnings("unchecked")
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         if (isDebug()) {
             TcpDiscoverySpi discoSpi = new TcpDiscoverySpi();
@@ -59,22 +61,6 @@ public class TxPessimisticDeadlockDetectionCrossCacheTest extends GridCommonAbst
 
             cfg.setDiscoverySpi(discoSpi);
         }
-
-        CacheConfiguration ccfg0 = defaultCacheConfiguration();
-
-        ccfg0.setName("cache0");
-        ccfg0.setCacheMode(CacheMode.PARTITIONED);
-        ccfg0.setBackups(1);
-        ccfg0.setNearConfiguration(null);
-
-        CacheConfiguration ccfg1 = defaultCacheConfiguration();
-
-        ccfg1.setName("cache1");
-        ccfg1.setCacheMode(CacheMode.PARTITIONED);
-        ccfg1.setBackups(1);
-        ccfg1.setNearConfiguration(null);
-
-        cfg.setCacheConfiguration(ccfg0, ccfg1);
 
         return cfg;
     }
@@ -86,80 +72,139 @@ public class TxPessimisticDeadlockDetectionCrossCacheTest extends GridCommonAbst
         startGrids(NODES_CNT);
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        super.afterTestsStopped();
-
-        stopAllGrids();
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDeadlockNoNear() throws Exception {
+        doTestDeadlock(false, false);
     }
 
     /**
      * @throws Exception If failed.
      */
-    public void testDeadlock() throws Exception {
-        final CyclicBarrier barrier = new CyclicBarrier(2);
+    @Test
+    public void testDeadlockOneNear() throws Exception {
+        doTestDeadlock(false, true);
+    }
 
-        final AtomicInteger threadCnt = new AtomicInteger();
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDeadlockAnotherNear() throws Exception {
+        doTestDeadlock(true, false);
+        doTestDeadlock(false, true);
+    }
 
-        final AtomicBoolean deadlock = new AtomicBoolean();
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDeadlockBothNear() throws Exception {
+        doTestDeadlock(true, true);
+    }
 
-        IgniteInternalFuture<Long> fut = GridTestUtils.runMultiThreadedAsync(new Runnable() {
-            @Override public void run() {
-                int threadNum = threadCnt.getAndIncrement();
+    /**
+     * @param near0 Near flag for cache0.
+     * @param near1 Near flag for cache1.
+     */
+    private void doTestDeadlock(boolean near0, boolean near1) throws Exception {
+        IgniteCache<Integer, Integer> cache0 = null;
+        IgniteCache<Integer, Integer> cache1 = null;
 
-                Ignite ignite = ignite(0);
+        try {
+            cache0 = getCache(ignite(0), "cache0", near0);
+            cache1 = getCache(ignite(0), "cache1", near1);
 
-                IgniteCache<Integer, Integer> cache1 = ignite.cache("cache" + (threadNum == 0 ? 0 : 1));
+            awaitPartitionMapExchange();
 
-                IgniteCache<Integer, Integer> cache2 = ignite.cache("cache" + (threadNum == 0 ? 1 : 0));
+            final CyclicBarrier barrier = new CyclicBarrier(2);
 
-                try (Transaction tx =
-                         ignite.transactions().txStart(PESSIMISTIC, REPEATABLE_READ, 500, 0)
-                ) {
-                    int key1 = primaryKey(cache1);
+            final AtomicInteger threadCnt = new AtomicInteger();
 
-                    log.info(">>> Performs put [node=" + ((IgniteKernal)ignite).localNode() +
-                        ", tx=" + tx + ", key=" + key1 + ", cache=" + cache1.getName() + ']');
+            final AtomicBoolean deadlock = new AtomicBoolean();
 
-                    cache1.put(key1, 0);
+            IgniteInternalFuture<Long> fut = GridTestUtils.runMultiThreadedAsync(new Runnable() {
+                @Override public void run() {
+                    int threadNum = threadCnt.getAndIncrement();
 
-                    barrier.await();
+                    Ignite ignite = ignite(0);
 
-                    int key2 = primaryKey(cache2);
+                    IgniteCache<Integer, Integer> cache1 = ignite.cache("cache" + (threadNum == 0 ? 0 : 1));
 
-                    log.info(">>> Performs put [node=" + ((IgniteKernal)ignite).localNode() +
-                        ", tx=" + tx + ", key=" + key2 + ", cache=" + cache2.getName() + ']');
+                    IgniteCache<Integer, Integer> cache2 = ignite.cache("cache" + (threadNum == 0 ? 1 : 0));
 
-                    cache2.put(key2, 1);
+                    try (Transaction tx =
+                             ignite.transactions().txStart(PESSIMISTIC, REPEATABLE_READ, 500, 0)
+                    ) {
+                        int key1 = primaryKey(cache1);
 
-                    tx.commit();
-                }
-                catch (Throwable e) {
-                    // At least one stack trace should contain TransactionDeadlockException.
-                    if (hasCause(e, TransactionTimeoutException.class) &&
-                        hasCause(e, TransactionDeadlockException.class)
-                        ) {
-                        if (deadlock.compareAndSet(false, true))
-                            U.error(log, "At least one stack trace should contain " +
-                                TransactionDeadlockException.class.getSimpleName(), e);
+                        log.info(">>> Performs put [node=" + ((IgniteKernal)ignite).localNode() +
+                            ", tx=" + tx + ", key=" + key1 + ", cache=" + cache1.getName() + ']');
+
+                        cache1.put(key1, 0);
+
+                        barrier.await();
+
+                        int key2 = primaryKey(cache2);
+
+                        log.info(">>> Performs put [node=" + ((IgniteKernal)ignite).localNode() +
+                            ", tx=" + tx + ", key=" + key2 + ", cache=" + cache2.getName() + ']');
+
+                        cache2.put(key2, 1);
+
+                        tx.commit();
+                    }
+                    catch (Throwable e) {
+                        // At least one stack trace should contain TransactionDeadlockException.
+                        if (hasCause(e, TransactionTimeoutException.class) &&
+                            hasCause(e, TransactionDeadlockException.class)
+                            ) {
+                            if (deadlock.compareAndSet(false, true))
+                                U.error(log, "At least one stack trace should contain " +
+                                    TransactionDeadlockException.class.getSimpleName(), e);
+                        }
                     }
                 }
+            }, 2, "tx-thread");
+
+            fut.get();
+
+            assertTrue(deadlock.get());
+
+            for (int i = 0; i < NODES_CNT ; i++) {
+                Ignite ignite = ignite(i);
+
+                IgniteTxManager txMgr = ((IgniteKernal)ignite).context().cache().context().tm();
+
+                Collection<IgniteInternalFuture<?>> futs = txMgr.deadlockDetectionFutures();
+
+                assertTrue(futs.isEmpty());
             }
-        }, 2, "tx-thread");
-
-        fut.get();
-
-        assertTrue(deadlock.get());
-
-        for (int i = 0; i < NODES_CNT ; i++) {
-            Ignite ignite = ignite(i);
-
-            IgniteTxManager txMgr = ((IgniteKernal)ignite).context().cache().context().tm();
-
-            ConcurrentMap<Long, TxDeadlockDetection.TxDeadlockFuture> futs =
-                GridTestUtils.getFieldValue(txMgr, IgniteTxManager.class, "deadlockDetectFuts");
-
-            assertTrue(futs.isEmpty());
         }
+        finally {
+            if (cache0 != null)
+                cache0.destroy();
+
+            if (cache1 != null)
+                cache1.destroy();
+        }
+    }
+
+    /**
+     * @param ignite Ignite.
+     * @param name Name.
+     * @param near Near.
+     */
+    private IgniteCache<Integer, Integer> getCache(Ignite ignite, @NotNull String name, boolean near) {
+        CacheConfiguration ccfg = defaultCacheConfiguration();
+
+        ccfg.setName(name);
+        ccfg.setCacheMode(CacheMode.PARTITIONED);
+        ccfg.setBackups(1);
+        ccfg.setNearConfiguration(near ? new NearCacheConfiguration() : null);
+
+        return ignite.getOrCreateCache(ccfg);
     }
 }

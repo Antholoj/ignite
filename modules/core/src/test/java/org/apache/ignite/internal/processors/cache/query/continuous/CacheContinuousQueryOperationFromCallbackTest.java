@@ -52,16 +52,13 @@ import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteAsyncCallback;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.spi.eventstorage.memory.MemoryEventStorageSpi;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Test;
 
-import static org.apache.ignite.cache.CacheAtomicWriteOrderMode.PRIMARY;
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
@@ -80,9 +77,6 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     public static final int KEYS_FROM_CALLBACK = 20;
 
     /** */
-    private static TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
-
-    /** */
     private static final int NODES = 5;
 
     /** */
@@ -98,12 +92,11 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     private static AtomicInteger filterCbCntr = new AtomicInteger(0);
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setSystemThreadPoolSize(SYSTEM_POOL_SIZE);
 
-        ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setIpFinder(ipFinder);
         ((TcpCommunicationSpi)cfg.getCommunicationSpi()).setSharedMemoryPort(-1);
 
         cfg.setClientMode(client);
@@ -128,13 +121,6 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     }
 
     /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-
-        super.afterTestsStopped();
-    }
-
-    /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
         super.beforeTest();
 
@@ -144,6 +130,47 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
+    public void testAtomicOneBackup() throws Exception {
+        CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 1, ATOMIC, FULL_SYNC);
+
+        doTest(ccfg, true);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testTxOneBackupFilter() throws Exception {
+        CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 1, TRANSACTIONAL, FULL_SYNC);
+
+        doTest(ccfg, false);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testTxOneBackupFilterPrimary() throws Exception {
+        CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 1, TRANSACTIONAL, PRIMARY_SYNC);
+
+        doTest(ccfg, false);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testTxOneBackup() throws Exception {
+        CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 1, TRANSACTIONAL, FULL_SYNC);
+
+        doTest(ccfg, true);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
     public void testAtomicTwoBackups() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 2, ATOMIC, FULL_SYNC);
 
@@ -153,6 +180,7 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTxTwoBackupsFilter() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 2, TRANSACTIONAL, FULL_SYNC);
 
@@ -162,6 +190,7 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTxTwoBackupsFilterPrimary() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 2, TRANSACTIONAL, PRIMARY_SYNC);
 
@@ -171,6 +200,7 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTxReplicatedFilter() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(REPLICATED, 0, TRANSACTIONAL, FULL_SYNC);
 
@@ -180,6 +210,7 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTxTwoBackup() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(PARTITIONED, 2, TRANSACTIONAL, FULL_SYNC);
 
@@ -189,6 +220,7 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTxReplicated() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(REPLICATED, 2, TRANSACTIONAL, FULL_SYNC);
 
@@ -198,6 +230,7 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testTxReplicatedPrimary() throws Exception {
         CacheConfiguration<Object, Object> ccfg = cacheConfiguration(REPLICATED, 2, TRANSACTIONAL, PRIMARY_SYNC);
 
@@ -520,13 +553,12 @@ public class CacheContinuousQueryOperationFromCallbackTest extends GridCommonAbs
         int backups,
         CacheAtomicityMode atomicityMode,
         CacheWriteSynchronizationMode writeMode) {
-        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>();
+        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
         ccfg.setName("test-cache-" + atomicityMode + "-" + cacheMode + "-" + writeMode + "-" + backups);
         ccfg.setAtomicityMode(atomicityMode);
         ccfg.setCacheMode(cacheMode);
         ccfg.setWriteSynchronizationMode(writeMode);
-        ccfg.setAtomicWriteOrderMode(PRIMARY);
 
         if (cacheMode == PARTITIONED)
             ccfg.setBackups(backups);

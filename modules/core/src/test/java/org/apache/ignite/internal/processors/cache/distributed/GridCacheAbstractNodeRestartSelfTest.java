@@ -33,19 +33,20 @@ import javax.cache.CacheException;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteException;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.IgniteTransactions;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheRebalanceMode;
+import org.apache.ignite.cache.eviction.lru.LruEvictionPolicy;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
-import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.GridTestUtils.SF;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionConcurrency;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
@@ -58,7 +59,6 @@ import static org.apache.ignite.transactions.TransactionIsolation.REPEATABLE_REA
 /**
  * Test node restart.
  */
-@SuppressWarnings({"PointlessArithmeticExpression"})
 public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbstractTest {
     /** Cache name. */
     protected static final String CACHE_NAME = "TEST_CACHE";
@@ -100,6 +100,9 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     protected CacheRebalanceMode rebalancMode = ASYNC;
 
     /** */
+    protected boolean evict = false;
+
+    /** */
     protected int rebalancBatchSize = DFLT_BATCH_SIZE;
 
     /** Number of partitions. */
@@ -114,32 +117,29 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /** Retries. */
     private int retries = DFLT_RETRIES;
 
-    /** */
-    private GridTestUtils.TestMemoryMode memMode = GridTestUtils.TestMemoryMode.HEAP;
-
-    /** */
-    private static final TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
-
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration c = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration c = super.getConfiguration(igniteInstanceName);
 
         ((TcpCommunicationSpi)c.getCommunicationSpi()).setSharedMemoryPort(-1);
 
         // Discovery.
-        TcpDiscoverySpi disco = new TcpDiscoverySpi();
-
-        disco.setIpFinder(ipFinder);
+        TcpDiscoverySpi disco = (TcpDiscoverySpi)c.getDiscoverySpi();
 
         disco.setSocketTimeout(30_000);
         disco.setAckTimeout(30_000);
         disco.setNetworkTimeout(30_000);
 
-        c.setDiscoverySpi(disco);
-
         CacheConfiguration ccfg = cacheConfiguration();
 
-        GridTestUtils.setMemoryMode(c, ccfg, memMode, 100, 1024);
+        if (evict) {
+            LruEvictionPolicy plc = new LruEvictionPolicy();
+
+            plc.setMaxSize(100);
+
+            ccfg.setEvictionPolicy(plc);
+            ccfg.setOnheapCacheEnabled(true);
+        }
 
         c.setCacheConfiguration(ccfg);
 
@@ -152,12 +152,9 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     protected abstract CacheConfiguration cacheConfiguration();
 
     /** {@inheritDoc} */
-    @Override protected void beforeTestsStarted() throws Exception {
-        // No-op.
-    }
-
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
+    @Override protected void afterTest() throws Exception {
+        super.afterTest();
+        
         stopAllGrids();
     }
 
@@ -166,6 +163,7 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
         backups = DFLT_BACKUPS;
         partitions = DFLT_PARTITIONS;
         rebalancMode = ASYNC;
+        evict = false;
         rebalancBatchSize = DFLT_BATCH_SIZE;
         nodeCnt = DFLT_NODE_CNT;
         keyCnt = DFLT_KEY_CNT;
@@ -188,7 +186,7 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
-    private void startGrids() throws  Exception {
+    private void startGrids() throws Exception {
         for (int i = 0; i < nodeCnt; i++) {
             startGrid(i);
 
@@ -200,6 +198,7 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestart() throws Exception {
         rebalancMode = SYNC;
         partitions = 3;
@@ -276,14 +275,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutTwoNodesNoBackups() throws Throwable {
         backups = 0;
         nodeCnt = 2;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 30000;
+        long duration = SF.applyLB(30_000, 3_000);
 
         checkRestartWithPut(duration, 1, 1);
     }
@@ -291,14 +292,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxTwoNodesNoBackups() throws Throwable {
         backups = 0;
         nodeCnt = 2;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 30000;
+        long duration = SF.applyLB(30_000, 3_000);
 
         checkRestartWithTx(duration, 1, 1, 3);
     }
@@ -306,14 +309,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutTwoNodesOneBackup() throws Throwable {
         backups = 1;
         nodeCnt = 2;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 30000;
+        long duration = SF.applyLB(30_000, 3_000);
 
         checkRestartWithPut(duration, 1, 1);
     }
@@ -321,14 +326,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxTwoNodesOneBackup() throws Throwable {
         backups = 1;
         nodeCnt = 2;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 30000;
+        long duration = SF.applyLB(30_000, 3_000);
 
         checkRestartWithTx(duration, 1, 1, 3);
     }
@@ -336,14 +343,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutFourNodesNoBackups() throws Throwable {
         backups = 0;
         nodeCnt = 4;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 60000;
+        long duration = SF.applyLB(60_000, 5_000);
 
         checkRestartWithPut(duration, 2, 2);
     }
@@ -351,14 +360,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxFourNodesNoBackups() throws Throwable {
         backups = 0;
         nodeCnt = 4;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 60000;
+        long duration = SF.applyLB(60_000, 5_000);
 
         checkRestartWithTx(duration, 2, 2, 3);
     }
@@ -366,14 +377,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutFourNodesOneBackups() throws Throwable {
         backups = 1;
         nodeCnt = 4;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 60000;
+        long duration = SF.applyLB(60_000, 5_000);
 
         checkRestartWithPut(duration, 2, 2);
     }
@@ -381,52 +394,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
-    public void testRestartWithPutFourNodesOneBackupsSwap() throws Throwable {
-        restartWithPutFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.SWAP);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    public void testRestartWithPutFourNodesOneBackupsOffheapTiered() throws Throwable {
-        restartWithPutFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_TIERED);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    public void testRestartWithPutFourNodesOneBackupsOffheapTieredSwap() throws Throwable {
-        restartWithPutFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_TIERED_SWAP);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
+    @Test
     public void testRestartWithPutFourNodesOneBackupsOffheapEvict() throws Throwable {
-        restartWithPutFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_EVICT);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    public void testRestartWithPutFourNodesOneBackupsOffheapEvictSwap() throws Throwable {
-        restartWithPutFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_EVICT_SWAP);
-    }
-
-    /**
-     * @param memMode Memory mode.
-     * @throws Throwable If failed.
-     */
-    private void restartWithPutFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode memMode)
-        throws Throwable {
         backups = 1;
         nodeCnt = 4;
-        keyCnt = 100_000;
+        keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
-        this.memMode = memMode;
+        evict = true;
 
-        long duration = 30_000;
+        long duration = SF.applyLB(60_000, 5_000);
 
         checkRestartWithPut(duration, 2, 2);
     }
@@ -434,14 +411,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxFourNodesOneBackups() throws Throwable {
         backups = 1;
         nodeCnt = 4;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 60000;
+        long duration = SF.applyLB(60_000, 5_000);
 
         checkRestartWithTx(duration, 2, 2, 3);
     }
@@ -449,51 +428,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
-    public void testRestartWithTxFourNodesOneBackupsSwap() throws Throwable {
-        restartWithTxFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.SWAP);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    public void testRestartWithTxFourNodesOneBackupsOffheapTiered() throws Throwable {
-        restartWithTxFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_TIERED);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    public void testRestartWithTxFourNodesOneBackupsOffheapTieredSwap() throws Throwable {
-        restartWithTxFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_TIERED_SWAP);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
+    @Test
     public void testRestartWithTxFourNodesOneBackupsOffheapEvict() throws Throwable {
-        restartWithTxFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_EVICT);
-    }
-
-    /**
-     * @throws Exception If failed.
-     */
-    public void testRestartWithTxFourNodesOneBackupsOffheapEvictSwap() throws Throwable {
-        restartWithTxFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode.OFFHEAP_EVICT_SWAP);
-    }
-
-    /**
-     * @param memMode Memory mode.
-     * @throws Throwable If failed.
-     */
-    private void restartWithTxFourNodesOneBackupsWithMemoryMode(GridTestUtils.TestMemoryMode memMode) throws Throwable {
         backups = 1;
         nodeCnt = 4;
         keyCnt = 100_000;
         partitions = 29;
         rebalancMode = ASYNC;
-        this.memMode = memMode;
+        evict = true;
 
-        long duration = 30_000;
+        long duration = SF.applyLB(30_000, 3_000);
 
         checkRestartWithTx(duration, 2, 2, 100);
     }
@@ -501,14 +445,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutSixNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 6;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithPut(duration, 3, 3);
     }
@@ -516,14 +462,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxSixNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 6;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithTx(duration, 3, 3, 3);
     }
@@ -531,14 +479,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutEightNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 8;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithPut(duration, 4, 4);
     }
@@ -546,14 +496,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxEightNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 8;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithTx(duration, 4, 4, 3);
     }
@@ -561,14 +513,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithPutTenNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 10;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithPut(duration, 5, 5);
     }
@@ -576,14 +530,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxTenNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 10;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithTx(duration, 5, 5, 3);
     }
@@ -591,14 +547,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxPutAllTenNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 10;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithTxPutAll(duration, 5, 5);
     }
@@ -606,14 +564,16 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestartWithTxPutAllFourNodesTwoBackups() throws Throwable {
         backups = 2;
         nodeCnt = 4;
         keyCnt = 10;
         partitions = 29;
         rebalancMode = ASYNC;
+        evict = false;
 
-        long duration = 90000;
+        long duration = SF.applyLB(90_000, 6_000);
 
         checkRestartWithTxPutAll(duration, 2, 2);
     }
@@ -724,7 +684,12 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
             }
 
             for (Thread t : threads)
-                t.join();
+                t.join(2 * duration);
+
+            for (Thread t : threads) {
+                if (t.isAlive())
+                    t.interrupt();
+            }
 
             if (err.get() != null)
                 throw err.get();
@@ -777,7 +742,7 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
 
                             UUID locNodeId = ignite.cluster().localNode().id();
 
-                            IgniteCache<Integer, String> cache = ignite.cache(CACHE_NAME);
+                            IgniteCache<Integer, String> cache = ignite.cache(CACHE_NAME).withAllowAtomicOpsInTx();
 
                             List<Integer> keys = new ArrayList<>(txKeys);
 
@@ -858,7 +823,7 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
                             int cnt = 0;
 
                             while (System.currentTimeMillis() < endTime && err.get() == null) {
-                                stopGrid(gridIdx);
+                                stopGrid(getTestIgniteInstanceName(gridIdx), false, false);
                                 startGrid(gridIdx);
 
                                 int c = ++cnt;
@@ -934,7 +899,7 @@ public abstract class GridCacheAbstractNodeRestartSelfTest extends GridCommonAbs
 
                             UUID locNodeId = ignite.cluster().localNode().id();
 
-                            IgniteCache<Integer, String> cache = ignite.cache(CACHE_NAME);
+                            IgniteCache<Integer, String> cache = ignite.cache(CACHE_NAME).withAllowAtomicOpsInTx();
 
                             List<Integer> keys = new ArrayList<>(txKeys);
 

@@ -20,9 +20,9 @@
 <!-- 
 
 Creating NuGet package:
-1) Build Apache.Ignite.sln (x64 configuration)
+1) Build Apache.Ignite.sln (AnyCPU configuration)
 2) Create package (use csproj instead of nuspec so that template substitution works): 
-   nuget pack Apache.Ignite.Linq.csproj -Prop Configuration=Release -Prop Platform=x64
+   nuget pack Apache.Ignite.Linq.csproj -Prop Configuration=Release -Prop Platform=AnyCPU
 
 -->
 
@@ -43,14 +43,13 @@ LINQ Provider for Apache Ignite
 
 Query distributed in-memory data in a strongly-typed manner and with IDE support!
 All Ignite SQL features are supported: distributed joins, groupings, aggregates, field queries, and more.
+
+Supports .NET 4+ and .NET Core 2.0+.
             
 More info: https://apacheignite-net.readme.io/
         </description>
-        <summary>
-            LINQ Provider for Apache Ignite
-        </summary>
         <releaseNotes></releaseNotes>
-        <copyright>Copyright 2016</copyright>
+        <copyright>Copyright 2019</copyright>
         <tags>Apache Ignite In-Memory Distributed Computing SQL NoSQL LINQ Grid Map Reduce Cache linqpad-samples</tags>
         <dependencies>
             <dependency id="Apache.Ignite" version="[$version$]" />
@@ -58,6 +57,9 @@ More info: https://apacheignite-net.readme.io/
         </dependencies>    
     </metadata>
     <files>
+	    <file src="bin\$configuration$\Apache.Ignite.Linq.dll" target="lib\net40" />
+		<file src="bin\$configuration$\Apache.Ignite.Linq.xml" target="lib\net40" />
+
         <!-- LINQPad samples -->
         <file src="NuGet\LINQPad\*.*" target="linqpad-samples" />
     </files>

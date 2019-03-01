@@ -20,9 +20,12 @@ package org.apache.ignite.spi.discovery.tcp.ipfinder.cloud;
 import com.google.common.collect.ImmutableList;
 import java.net.InetSocketAddress;
 import java.util.Collection;
+
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinderAbstractSelfTest;
 import org.apache.ignite.testsuites.IgniteCloudTestSuite;
+import org.junit.Ignore;
+import org.junit.Test;
 
 /**
  * TcpDiscoveryCloudIpFinder test.
@@ -38,28 +41,21 @@ public class TcpDiscoveryCloudIpFinderSelfTest extends
         // No-op.
     }
 
+    /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
         // No-op.
     }
 
-    /* {@inheritDoc} */
+    /** {@inheritDoc} */
     @Override protected TcpDiscoveryCloudIpFinder ipFinder() throws Exception {
         // No-op.
         return null;
     }
 
-    /* {@inheritDoc} */
+    /** {@inheritDoc} */
+    @Test
     @Override public void testIpFinder() throws Exception {
         // No-op
-    }
-
-    /**
-     * Tests AWS.
-     *
-     * @throws Exception If any error occurs.
-     */
-    public void testAmazonWebServices() throws Exception {
-        testCloudProvider("aws-ec2");
     }
 
     /**
@@ -67,9 +63,9 @@ public class TcpDiscoveryCloudIpFinderSelfTest extends
      *
      * @throws Exception If any error occurs.
      */
+    @Ignore("https://issues.apache.org/jira/browse/IGNITE-1585")
+    @Test
     public void testGoogleComputeEngine() throws Exception {
-        fail("https://issues.apache.org/jira/browse/IGNITE-1585");
-
         testCloudProvider("google-compute-engine");
     }
 
@@ -78,6 +74,8 @@ public class TcpDiscoveryCloudIpFinderSelfTest extends
      *
      * @throws Exception If any error occurs.
      */
+    @Ignore("https://issues.apache.org/jira/browse/IGNITE-9444")
+    @Test
     public void testRackspace() throws Exception {
         testCloudProvider("rackspace-cloudservers-us");
     }

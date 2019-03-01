@@ -31,17 +31,16 @@ import org.apache.ignite.IgniteBinary;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.lang.GridAbsPredicate;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.internal.binary.BinaryMarshaller;
 import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.binary.BinaryType;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
-import org.eclipse.jetty.util.ConcurrentHashSet;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 
@@ -50,22 +49,19 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
  */
 public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCommonAbstractTest {
     /** */
-    protected static TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
-
-    /** */
     private boolean client;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setPeerClassLoadingEnabled(false);
 
-        ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setIpFinder(ipFinder).setForceServerMode(true);
+        ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setForceServerMode(true);
 
         cfg.setMarshaller(new BinaryMarshaller());
 
-        CacheConfiguration ccfg = new CacheConfiguration();
+        CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
         ccfg.setWriteSynchronizationMode(FULL_SYNC);
 
@@ -86,12 +82,13 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClientMetadataInitialization() throws Exception {
         startGrids(2);
 
         final AtomicBoolean stop = new AtomicBoolean();
 
-        final ConcurrentHashSet<String> allTypes = new ConcurrentHashSet<>();
+        final GridConcurrentHashSet<String> allTypes = new GridConcurrentHashSet<>();
 
         IgniteInternalFuture<?> fut;
 
@@ -101,7 +98,7 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
                 @Override public Object call() throws Exception {
                     IgniteBinary binaries = ignite(0).binary();
 
-                    IgniteCache<Object, Object> cache = ignite(0).cache(null).withKeepBinary();
+                    IgniteCache<Object, Object> cache = ignite(0).cache(DEFAULT_CACHE_NAME).withKeepBinary();
 
                     ThreadLocalRandom rnd = ThreadLocalRandom.current();
 
@@ -165,6 +162,8 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
             Set<String> names = new HashSet<>();
 
             for (BinaryType meta : metaCol) {
+                info("Binary type: " + meta);
+
                 assertTrue(names.add(meta.typeName()));
 
                 assertNull(meta.affinityKeyFieldName());
@@ -179,12 +178,13 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testFailoverOnStart() throws Exception {
         startGrids(4);
 
         IgniteBinary binaries = ignite(0).binary();
 
-        IgniteCache<Object, Object> cache = ignite(0).cache(null).withKeepBinary();
+        IgniteCache<Object, Object> cache = ignite(0).cache(DEFAULT_CACHE_NAME).withKeepBinary();
 
         for (int i = 0; i < 1000; i++) {
             BinaryObjectBuilder builder = binaries.builder("type-" + i);
@@ -240,7 +240,7 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
                 @Override public boolean apply() {
                     Collection<BinaryType> metaCol = p0.types();
 
-                    return metaCol.size() == 1000;
+                    return metaCol.size() >= 1000;
                 }
             }, getTestTimeout());
 
@@ -265,6 +265,7 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClientStartsFirst() throws Exception {
         client = true;
 
@@ -280,7 +281,7 @@ public class GridCacheClientNodeBinaryObjectMetadataMultinodeTest extends GridCo
 
         IgniteBinary binaries = ignite(1).binary();
 
-        IgniteCache<Object, Object> cache = ignite(1).cache(null).withKeepBinary();
+        IgniteCache<Object, Object> cache = ignite(1).cache(DEFAULT_CACHE_NAME).withKeepBinary();
 
         for (int i = 0; i < 100; i++) {
             BinaryObjectBuilder builder = binaries.builder("type-" + i);

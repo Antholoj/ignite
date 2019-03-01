@@ -38,12 +38,10 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
+import org.junit.Test;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
@@ -56,9 +54,6 @@ import static org.apache.ignite.transactions.TransactionIsolation.REPEATABLE_REA
  *
  */
 public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest {
-    /** */
-    private static final TcpDiscoveryIpFinder IP_FINDER = new TcpDiscoveryVmIpFinder(true);
-
     /** */
     private static final int SRVS = 4;
 
@@ -75,23 +70,14 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
     private boolean client;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
-
-        ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setIpFinder(IP_FINDER);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         ((TcpCommunicationSpi)cfg.getCommunicationSpi()).setSharedMemoryPort(-1);
 
         cfg.setClientMode(client);
 
         return cfg;
-    }
-
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        stopAllGrids();
-
-        super.afterTestsStopped();
     }
 
     /** {@inheritDoc} */
@@ -104,6 +90,7 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRecovery1() throws Exception {
         checkRecovery(1, false);
     }
@@ -111,6 +98,7 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRecovery2() throws Exception {
         checkRecovery(2, false);
     }
@@ -118,6 +106,7 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRecoveryStoreEnabled1() throws Exception {
         checkRecovery(1, true);
     }
@@ -125,6 +114,7 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRecoveryStoreEnabled2() throws Exception {
         checkRecovery(2, true);
     }
@@ -154,11 +144,11 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
         assertFalse(srv.configuration().isClientMode());
 
         for (Boolean pessimistic : Arrays.asList(false, true)) {
-            checkRecovery(backupKey(srv.cache(null)), srv, pessimistic, useStore);
+            checkRecovery(backupKey(srv.cache(DEFAULT_CACHE_NAME)), srv, pessimistic, useStore);
 
-            checkRecovery(nearKey(srv.cache(null)), srv, pessimistic, useStore);
+            checkRecovery(nearKey(srv.cache(DEFAULT_CACHE_NAME)), srv, pessimistic, useStore);
 
-            checkRecovery(nearKey(clientNode.cache(null)), clientNode, pessimistic, useStore);
+            checkRecovery(nearKey(clientNode.cache(DEFAULT_CACHE_NAME)), clientNode, pessimistic, useStore);
 
             srv = ignite(0);
 
@@ -177,11 +167,11 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
         final Ignite ignite,
         final boolean pessimistic,
         final boolean useStore) throws Exception {
-        Ignite primary = primaryNode(key, null);
+        Ignite primary = primaryNode(key, DEFAULT_CACHE_NAME);
 
         assertNotSame(ignite, primary);
 
-        List<Ignite> backups = backupNodes(key, null);
+        List<Ignite> backups = backupNodes(key, DEFAULT_CACHE_NAME);
 
         assertFalse(backups.isEmpty());
 
@@ -196,7 +186,7 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
             ", backups=" + backupNames +
             ", node=" + ignite.name() + ']');
 
-        final IgniteCache<Integer, Integer> cache = ignite.cache(null);
+        final IgniteCache<Integer, Integer> cache = ignite.cache(DEFAULT_CACHE_NAME);
 
         cache.put(key, 0);
 
@@ -253,22 +243,22 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
         fut.get();
 
         for (Ignite node : G.allGrids())
-            assertEquals(1, node.cache(null).get(key));
+            assertEquals(1, node.cache(DEFAULT_CACHE_NAME).get(key));
 
         cache.put(key, 2);
 
         for (Ignite node : G.allGrids())
-            assertEquals(2, node.cache(null).get(key));
+            assertEquals(2, node.cache(DEFAULT_CACHE_NAME).get(key));
 
         startGrid(primary.name());
 
         for (Ignite node : G.allGrids())
-            assertEquals(2, node.cache(null).get(key));
+            assertEquals(2, node.cache(DEFAULT_CACHE_NAME).get(key));
 
         cache.put(key, 3);
 
         for (Ignite node : G.allGrids())
-            assertEquals(3, node.cache(null).get(key));
+            assertEquals(3, node.cache(DEFAULT_CACHE_NAME).get(key));
 
         awaitPartitionMapExchange();
     }
@@ -336,7 +326,7 @@ public class IgniteCacheCommitDelayTxRecoveryTest extends GridCommonAbstractTest
      * @return Cache configuration.
      */
     private CacheConfiguration<Object, Object> cacheConfiguration(int backups, boolean useStore) {
-        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>();
+        CacheConfiguration<Object, Object> ccfg = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
         ccfg.setAtomicityMode(TRANSACTIONAL);
         ccfg.setBackups(backups);

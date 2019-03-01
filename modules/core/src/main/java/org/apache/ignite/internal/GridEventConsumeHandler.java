@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
@@ -46,6 +47,7 @@ import org.apache.ignite.internal.processors.continuous.GridContinuousHandler;
 import org.apache.ignite.internal.processors.platform.PlatformEventFilterListener;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.P2;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
@@ -70,7 +72,6 @@ class GridEventConsumeHandler implements GridContinuousHandler {
     };
 
     /** Local callback. */
-    @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
     private IgniteBiPredicate<UUID, Event> cb;
 
     /** Filter. */
@@ -136,9 +137,14 @@ class GridEventConsumeHandler implements GridContinuousHandler {
     }
 
     /** {@inheritDoc} */
-    @Override public void updateCounters(AffinityTopologyVersion topVer, Map<UUID, Map<Integer, Long>> cntrsPerNode,
-        Map<Integer, Long> cntrs) {
+    @Override public void updateCounters(AffinityTopologyVersion topVer, Map<UUID, Map<Integer, T2<Long, Long>>> cntrsPerNode,
+        Map<Integer, T2<Long, Long>> cntrs) {
         // No-op.
+    }
+
+    /** {@inheritDoc} */
+    @Override public Map<Integer, T2<Long, Long>> updateCounters() {
+        return Collections.emptyMap();
     }
 
     /** {@inheritDoc} */
@@ -181,7 +187,7 @@ class GridEventConsumeHandler implements GridContinuousHandler {
                         notificationQueue.add(new T3<>(nodeId, routineId, evt));
 
                         if (!notificationInProgress) {
-                            ctx.getSystemExecutorService().submit(new Runnable() {
+                            ctx.getSystemExecutorService().execute(new Runnable() {
                                 @Override public void run() {
                                     if (!ctx.continuous().lockStopping())
                                         return;
@@ -262,11 +268,6 @@ class GridEventConsumeHandler implements GridContinuousHandler {
     }
 
     /** {@inheritDoc} */
-    @Override public void onListenerRegistered(UUID routineId, GridKernalContext ctx) {
-        // No-op.
-    }
-
-    /** {@inheritDoc} */
     @Override public void unregister(UUID routineId, GridKernalContext ctx) {
         assert routineId != null;
         assert ctx != null;
@@ -325,8 +326,13 @@ class GridEventConsumeHandler implements GridContinuousHandler {
                     GridDeploymentInfo depInfo = wrapper.depInfo;
 
                     if (depInfo != null) {
-                        depMgr.p2pContext(nodeId, depInfo.classLoaderId(), depInfo.userVersion(), depInfo.deployMode(),
-                            depInfo.participants(), depInfo.localDeploymentOwner());
+                        depMgr.p2pContext(
+                            nodeId,
+                            depInfo.classLoaderId(),
+                            depInfo.userVersion(),
+                            depInfo.deployMode(),
+                            depInfo.participants()
+                        );
                     }
 
                     ldr = depMgr.globalLoader();
@@ -370,7 +376,7 @@ class GridEventConsumeHandler implements GridContinuousHandler {
 
             depInfo = new GridDeploymentInfoBean(dep);
 
-            filterBytes = ctx.config().getMarshaller().marshal(filter);
+            filterBytes = U.marshal(ctx.config().getMarshaller(), filter);
         }
     }
 
@@ -387,7 +393,7 @@ class GridEventConsumeHandler implements GridContinuousHandler {
             if (dep == null)
                 throw new IgniteDeploymentCheckedException("Failed to obtain deployment for class: " + clsName);
 
-            filter = ctx.config().getMarshaller().unmarshal(filterBytes, U.resolveClassLoader(dep.classLoader(), ctx.config()));
+            filter = U.unmarshal(ctx, filterBytes, U.resolveClassLoader(dep.classLoader(), ctx.config()));
         }
     }
 
@@ -397,7 +403,17 @@ class GridEventConsumeHandler implements GridContinuousHandler {
     }
 
     /** {@inheritDoc} */
+    @Override public void onClientDisconnected() {
+        // No-op.
+    }
+
+    /** {@inheritDoc} */
     @Override public void onBatchAcknowledged(UUID routineId, GridContinuousBatch batch, GridKernalContext ctx) {
+        // No-op.
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onNodeLeft() {
         // No-op.
     }
 
@@ -490,7 +506,7 @@ class GridEventConsumeHandler implements GridContinuousHandler {
         void p2pMarshal(Marshaller marsh) throws IgniteCheckedException {
             assert marsh != null;
 
-            bytes = marsh.marshal(evt);
+            bytes = U.marshal(marsh, evt);
         }
 
         /**
@@ -504,7 +520,7 @@ class GridEventConsumeHandler implements GridContinuousHandler {
             assert evt == null;
             assert bytes != null;
 
-            evt = marsh.unmarshal(bytes, ldr);
+            evt = U.unmarshal(marsh, bytes, ldr);
         }
 
         /** {@inheritDoc} */

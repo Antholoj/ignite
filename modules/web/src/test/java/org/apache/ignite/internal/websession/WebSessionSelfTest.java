@@ -51,6 +51,8 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Ignore;
+import org.junit.Test;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_PUT;
 
@@ -63,6 +65,12 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
 
     /** Servers count in load test. */
     private static final int SRV_CNT = 3;
+
+    /** Session invalidated marker. Added to HTTP response to indicate that session invalidation was successful. */
+    public static final String INVALIDATED = "invalidated";
+
+    /** Session invalidated failed marker fot HTTP reponse. */
+    public static final String FAILED = "failed";
 
     /**
      * @return Name of the cache for this test.
@@ -81,6 +89,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleRequest() throws Exception {
         testSingleRequest("/modules/core/src/test/config/websession/example-cache.xml");
     }
@@ -88,6 +97,8 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Ignore("https://issues.apache.org/jira/browse/IGNITE-3663")
+    @Test
     public void testSessionRenewalDuringLogin() throws Exception {
         testSessionRenewalDuringLogin("/modules/core/src/test/config/websession/example-cache.xml");
     }
@@ -95,6 +106,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testSingleRequestMetaInf() throws Exception {
         testSingleRequest("ignite-webapp-config.xml");
     }
@@ -102,6 +114,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testImplicitlyAttributeModification() throws Exception {
         testImplicitlyModification("ignite-webapp-config.xml");
     }
@@ -109,6 +122,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testClientReconnectRequest() throws Exception {
         testClientReconnectRequest("/modules/core/src/test/config/websession/example-cache.xml",
             "/modules/core/src/test/config/websession/example-cache2.xml",
@@ -156,7 +170,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
                 assertNotNull(sesId);
             }
 
-            Ignite ignite2 = Ignition.start(srvCfg2);
+            Ignition.start(srvCfg2);
 
             stopGrid(ignite.name());
 
@@ -198,6 +212,10 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
         }
     }
 
+    /**
+     * @param reqMarker Request marker.
+     * @param sesId Session id.
+     */
     private String sendRequestAndCheckMarker(String reqMarker, String sesId) throws IOException, IgniteCheckedException {
         URLConnection conn = new URL("http://localhost:" + TEST_JETTY_PORT +
             "/ignitetest/test?marker=" + reqMarker).openConnection();
@@ -303,7 +321,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
      */
     private void testSessionRenewalDuringLogin(String cfg) throws Exception {
         Server srv = null;
-        String sesId = null;
+        String sesId;
         try {
             srv = startServerWithLoginService(TEST_JETTY_PORT, cfg, null, new SessionLoginServlet());
 
@@ -465,6 +483,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
      *
      * @throws Exception Exception If failed.
      */
+    @Test
     public void testInvalidatedSession() throws Exception {
         String invalidatedSesId;
         Server srv = null;
@@ -582,6 +601,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
      *
      * @throws Exception Exception If failed.
      */
+    @Test
     public void testChangeSessionId() throws Exception {
         String newWebSesId;
         Server srv = null;
@@ -669,7 +689,13 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
 
                 assertEquals("true", reqSesValid);
 
-                assertEquals("invalidated", rdr.readLine());
+                StringBuilder sb = new StringBuilder();
+                String line;
+
+                while ((line = rdr.readLine()) != null)
+                    sb.append(line);
+
+                assertTrue(sb.toString().contains(INVALIDATED));
             }
         }
         finally {
@@ -680,6 +706,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testRestarts() throws Exception {
         final AtomicReference<String> sesIdRef = new AtomicReference<>();
 
@@ -790,11 +817,11 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
 
     /**
      * @param cfg Configuration.
-     * @param gridName Grid name.
+     * @param igniteInstanceName Ignite instance name.
      * @param servlet Servlet.
      * @return Servlet container web context for this test.
      */
-    protected WebAppContext getWebContext(@Nullable String cfg, @Nullable String gridName,
+    protected WebAppContext getWebContext(@Nullable String cfg, @Nullable String igniteInstanceName,
         boolean keepBinaryFlag, HttpServlet servlet) {
         final String path = keepBinaryFlag ? "modules/core/src/test/webapp" : "modules/web/src/test/webapp2";
 
@@ -802,7 +829,7 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
             "/ignitetest");
 
         ctx.setInitParameter("IgniteConfigurationFilePath", cfg);
-        ctx.setInitParameter("IgniteWebSessionsGridName", gridName);
+        ctx.setInitParameter("IgniteWebSessionsGridName", igniteInstanceName);
         ctx.setInitParameter("IgniteWebSessionsCacheName", getCacheName());
         ctx.setInitParameter("IgniteWebSessionsMaximumRetriesOnFail", "100");
         ctx.setInitParameter("IgniteWebSessionsKeepBinary", Boolean.toString(keepBinaryFlag));
@@ -817,16 +844,16 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
      *
      * @param port Port number.
      * @param cfg Configuration.
-     * @param gridName Grid name.
+     * @param igniteInstanceName Ignite instance name.
      * @param servlet Servlet.
      * @return Server.
      * @throws Exception In case of error.
      */
-    private Server startServer(int port, @Nullable String cfg, @Nullable String gridName, HttpServlet servlet)
+    private Server startServer(int port, @Nullable String cfg, @Nullable String igniteInstanceName, HttpServlet servlet)
         throws Exception {
         Server srv = new Server(port);
 
-        WebAppContext ctx = getWebContext(cfg, gridName, keepBinary(), servlet);
+        WebAppContext ctx = getWebContext(cfg, igniteInstanceName, keepBinary(), servlet);
 
         srv.setHandler(ctx);
 
@@ -840,21 +867,22 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
      *
      * @param port Port number.
      * @param cfg Configuration.
-     * @param gridName Grid name.
+     * @param igniteInstanceName Ignite instance name.
      * @param servlet Servlet.
      * @return Server.
      * @throws Exception In case of error.
      */
-    private Server startServerWithLoginService(int port, @Nullable String cfg, @Nullable String gridName, HttpServlet servlet)
-            throws Exception {
+    private Server startServerWithLoginService(
+        int port, @Nullable String cfg, @Nullable String igniteInstanceName, HttpServlet servlet
+    ) throws Exception {
         Server srv = new Server(port);
 
-        WebAppContext ctx = getWebContext(cfg, gridName, keepBinary(), servlet);
+        WebAppContext ctx = getWebContext(cfg, igniteInstanceName, keepBinary(), servlet);
 
         HashLoginService hashLoginService = new HashLoginService();
         hashLoginService.setName("Test Realm");
         createRealm();
-        hashLoginService.setConfig("realm.properties");
+        hashLoginService.setConfig("/tmp/realm.properties");
         ctx.getSecurityHandler().setLoginService(hashLoginService);
 
         srv.setHandler(ctx);
@@ -884,14 +912,14 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
     private void stopServerWithLoginService(@Nullable Server srv) throws Exception{
         if (srv != null){
             srv.stop();
-            File realmFile = new File("realm.properties");
+            File realmFile = new File("/tmp/realm.properties");
             realmFile.delete();
         }
     }
 
     /** Creates a realm file to store test user credentials */
     private void createRealm() throws Exception{
-        File realmFile = new File("realm.properties");
+        File realmFile = new File("/tmp/realm.properties");
         FileWriter fileWriter = new FileWriter(realmFile);
         fileWriter.append("admin:admin");
         fileWriter.flush();
@@ -1068,10 +1096,11 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
 
                 try {
                     req.getSession().invalidate();
-                    res.getWriter().println("invalidated");
+
+                    res.getWriter().println(INVALIDATED);
                 }
-                catch (Exception e) {
-                    res.getWriter().println("failed");
+                catch (Exception ignored) {
+                    res.getWriter().println(FAILED);
                 }
 
                 res.getWriter().flush();
@@ -1113,10 +1142,10 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
                 res.getWriter().flush();
 
             } else if (req.getPathInfo().equals("/simple")) {
-                HttpSession session = req.getSession();
-                X.println(">>>", "Request session simple: " + session.getId(), ">>>");
+                HttpSession ses = req.getSession();
+                X.println(">>>", "Request session simple: " + ses.getId(), ">>>");
 
-                res.getWriter().write(session.getId());
+                res.getWriter().write(ses.getId());
 
                 res.getWriter().flush();
             }
@@ -1128,14 +1157,14 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
                 try {
                     req.login("admin", "admin");
                 } catch (Exception e) {
-                    X.printerrln("Login failed.");
+                    X.printerrln("Login failed due to exception.", e);
                 }
 
-                HttpSession session = req.getSession();
+                HttpSession ses = req.getSession();
 
-                X.println(">>>", "Logged In session: " + session.getId(), ">>>");
+                X.println(">>>", "Logged In session: " + ses.getId(), ">>>");
 
-                res.getWriter().write(session.getId());
+                res.getWriter().write(ses.getId());
 
                 res.getWriter().flush();
             }
@@ -1160,6 +1189,8 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse res)
             throws ServletException, IOException {
             HttpSession ses = req.getSession(true);
+
+            assertTrue(req.isRequestedSessionIdValid());
 
             sesId.compareAndSet(null, ses.getId());
 
@@ -1239,9 +1270,11 @@ public class WebSessionSelfTest extends GridCommonAbstractTest {
 
         /** {@inheritDoc} */
         @Override public int hashCode() {
-            int result = val != null ? val.hashCode() : 0;
-            result = 31 * result + (keepBinaryFlag ? 1 : 0);
-            return result;
+            int res = val != null ? val.hashCode() : 0;
+
+            res = 31 * res + (keepBinaryFlag ? 1 : 0);
+
+            return res;
         }
     }
 }

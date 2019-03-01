@@ -27,11 +27,9 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.NearCacheConfiguration;
 import org.apache.ignite.internal.IgniteInternalFuture;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.Test;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
@@ -42,19 +40,14 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
  */
 public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
     /** */
-    private static TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
-
-    /** */
     private boolean client;
 
     /** */
     private final int SRV_CNT = 3;
 
     /** {@inheritDoc} */
-    @Override protected IgniteConfiguration getConfiguration(String gridName) throws Exception {
-        IgniteConfiguration cfg = super.getConfiguration(gridName);
-
-        ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setIpFinder(ipFinder);
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         cfg.setClientMode(client);
 
@@ -74,16 +67,10 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
         client = false;
     }
 
-    /** {@inheritDoc} */
-    @Override protected void afterTestsStopped() throws Exception {
-        super.afterTestsStopped();
-
-        stopAllGrids();
-    }
-
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testUpdateMultithreadedTx() throws Exception {
         updateMultithreaded(TRANSACTIONAL, false);
     }
@@ -91,6 +78,7 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testUpdateMultithreadedTxRestart() throws Exception {
         updateMultithreaded(TRANSACTIONAL, true);
     }
@@ -98,6 +86,7 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testUpdateMultithreadedAtomic() throws Exception {
         updateMultithreaded(ATOMIC, false);
     }
@@ -105,6 +94,7 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
+    @Test
     public void testUpdateMultithreadedAtomicRestart() throws Exception {
         updateMultithreaded(ATOMIC, true);
     }
@@ -117,7 +107,7 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
     private void updateMultithreaded(CacheAtomicityMode atomicityMode, boolean restart) throws Exception {
         Ignite srv = ignite(0);
 
-        srv.destroyCache(null);
+        srv.destroyCache(DEFAULT_CACHE_NAME);
 
         IgniteCache<Integer, Integer> srvCache = srv.createCache(cacheConfiguration(atomicityMode));
 
@@ -126,14 +116,14 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
         assertTrue(client.configuration().isClientMode());
 
         final IgniteCache<Integer, Integer> clientCache =
-            client.createNearCache(null, new NearCacheConfiguration<Integer, Integer>());
+            client.createNearCache(DEFAULT_CACHE_NAME, new NearCacheConfiguration<Integer, Integer>());
 
         final AtomicBoolean stop = new AtomicBoolean();
 
         IgniteInternalFuture<?> restartFut = null;
 
         // Primary key for restarted node.
-        final Integer key0 = primaryKey(ignite(SRV_CNT - 1).cache(null));
+        final Integer key0 = primaryKey(ignite(SRV_CNT - 1).cache(DEFAULT_CACHE_NAME));
 
         if (restart) {
             restartFut = GridTestUtils.runAsync(new Callable<Void>() {
@@ -206,7 +196,7 @@ public class NearCacheMultithreadedUpdateTest extends GridCommonAbstractTest {
      * @return Cache configuration.
      */
     private CacheConfiguration<Integer, Integer> cacheConfiguration(CacheAtomicityMode atomicityMode) {
-        CacheConfiguration<Integer, Integer> ccfg = new CacheConfiguration<>();
+        CacheConfiguration<Integer, Integer> ccfg = new CacheConfiguration<>(DEFAULT_CACHE_NAME);
 
         ccfg.setAtomicityMode(atomicityMode);
         ccfg.setWriteSynchronizationMode(FULL_SYNC);
