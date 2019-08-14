@@ -46,7 +46,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Properties;
 import java.util.Queue;
 import java.util.Random;
 import java.util.Set;
@@ -74,6 +73,7 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.Ignition;
+import org.apache.ignite.cache.query.annotations.QuerySqlFunction;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
@@ -104,6 +104,7 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgnitePredicate;
+import org.apache.ignite.lang.IgniteRunnable;
 import org.apache.ignite.plugin.extensions.communication.Message;
 import org.apache.ignite.spi.discovery.DiscoverySpiCustomMessage;
 import org.apache.ignite.spi.discovery.DiscoverySpiListener;
@@ -113,7 +114,9 @@ import org.apache.ignite.testframework.junits.GridAbstractTest;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Utility class for tests.
@@ -296,6 +299,86 @@ public final class GridTestUtils {
 //            }
 //        }).start();
 //    }
+
+    /**
+     * Checks that string {@param str} doesn't contains substring {@param substr}. Logs both strings
+     * and throws {@link java.lang.AssertionError}, if contains.
+     *
+     * @param log Logger (optional).
+     * @param str String.
+     * @param substr Substring.
+     */
+    public static void assertNotContains(@Nullable IgniteLogger log, String str, String substr) {
+        try {
+            assertFalse(str.contains(substr));
+        } catch (AssertionError e) {
+            U.warn(log, String.format("String contain substring: '%s', but shouldn't:", substr));
+            U.warn(log, "String:");
+            U.warn(log, str);
+
+            throw e;
+        }
+    }
+
+    /**
+     * Checks that string {@param str} contains substring {@param substr}. Logs both strings
+     * and throws {@link java.lang.AssertionError}, if not.
+     *
+     * @param log Logger (optional).
+     * @param str String.
+     * @param substr Substring.
+     */
+    public static void assertContains(@Nullable IgniteLogger log, String str, String substr) {
+        try {
+            assertTrue(str != null && str.contains(substr));
+        } catch (AssertionError e) {
+            U.warn(log, String.format("String does not contain substring: '%s':", substr));
+            U.warn(log, "String:");
+            U.warn(log, str);
+
+            throw e;
+        }
+    }
+
+    /**
+     * Checks that collection {@param col} contains string {@param str}. Logs collection, string
+     * and throws {@link java.lang.AssertionError}, if not.
+     *
+     * @param log Logger (optional).
+     * @param col Collection.
+     * @param str String.
+     */
+    public static  <C extends Collection<String>> void assertContains(@Nullable IgniteLogger log, C col, String str) {
+        try {
+            assertTrue(col.contains(str));
+        } catch (AssertionError e) {
+            U.warn(log, String.format("Collection does not contain string: '%s':", str));
+            U.warn(log, "Collection:");
+            U.warn(log, col);
+
+            throw e;
+        }
+    }
+
+    /**
+     * Checks that collection {@param col} doesn't contains string {@param str}. Logs collection, string
+     * and throws {@link java.lang.AssertionError}, if contains.
+     *
+     * @param log Logger (optional).
+     * @param col Collection.
+     * @param str String.
+     */
+    public static <C extends Collection<String>> void assertNotContains(@Nullable IgniteLogger log, C col, String str) {
+        try {
+            assertFalse(col.contains(str));
+        } catch (AssertionError e) {
+            U.warn(log, String.format("Collection contain string: '%s' but shouldn't:", str));
+            U.warn(log, "Collection:");
+            U.warn(log, col);
+
+            throw e;
+        }
+    }
 
     /**
      * Checks whether callable throws expected exception or not.
@@ -1027,6 +1110,31 @@ public final class GridTestUtils {
     }
 
     /**
+     * Wait for all passed futures to complete even if they fail.
+     *
+     * @param futs Futures.
+     * @throws AssertionError Suppresses underlying exceptions if some futures failed.
+     */
+    public static void waitForAllFutures(IgniteInternalFuture<?>... futs) {
+        AssertionError err = null;
+
+        for (IgniteInternalFuture<?> fut : futs) {
+            try {
+                fut.get();
+            }
+            catch (Throwable t) {
+                if (err == null)
+                    err = new AssertionError("One or several futures threw the exception.");
+
+                err.addSuppressed(t);
+            }
+        }
+
+        if (err != null)
+            throw err;
+    }
+
+    /**
      * Interrupts and waits for termination of all the threads started
      * so far by current test.
      *
@@ -1563,7 +1671,6 @@ public final class GridTestUtils {
             cls = cls.getSuperclass();
         } while (cls != Object.class);
 
-
         throw new RuntimeException("Failed to find method" +
             " [obj=" + obj + ", mtd=" + mtd + ", params=" + Arrays.toString(params) + ']');
     }
@@ -1734,7 +1841,6 @@ public final class GridTestUtils {
 
         return factory;
     }
-
 
     /**
      * Creates test-purposed SSL context factory from test key store with disabled trust manager.
@@ -2030,7 +2136,7 @@ public final class GridTestUtils {
 
         /** */
         public static int apply(int val) {
-            return (int) Math.round(TEST_SCALE_FACTOR_VALUE * val);
+            return (int)Math.round(TEST_SCALE_FACTOR_VALUE * val);
         }
 
         /** */
@@ -2046,43 +2152,6 @@ public final class GridTestUtils {
         /** Apply scale factor with upper bound */
         public static int applyUB(int val, int upperBound) {
             return Math.min(apply(val), upperBound);
-        }
-    }
-
-    /** Adds system property on initialization and removes it when closed. */
-    public static final class SystemProperty implements AutoCloseable {
-        /** Name of property. */
-        private final String name;
-
-        /** Original value of property. */
-        private final String originalValue;
-
-        /**
-         * Constructor.
-         *
-         * @param name Name.
-         * @param val Value.
-         */
-        public SystemProperty(String name, String val) {
-            this.name = name;
-
-            Properties props = System.getProperties();
-
-            originalValue = (String)props.put(name, val);
-
-            System.setProperties(props);
-        }
-
-        /** {@inheritDoc} */
-        @Override public void close() {
-            Properties props = System.getProperties();
-
-            if (originalValue != null)
-                props.put(name, originalValue);
-            else
-                props.remove(name);
-
-            System.setProperties(props);
         }
     }
 
@@ -2122,5 +2191,111 @@ public final class GridTestUtils {
 
         for (File f : dir.listFiles(n -> n.getName().startsWith(IdleVerifyResultV2.IDLE_VERIFY_FILE_PREFIX)))
             f.delete();
+    }
+
+    public static class SqlTestFunctions {
+        /** Sleep milliseconds. */
+        public static volatile long sleepMs;
+
+        /** Fail flag. */
+        public static volatile boolean fail;
+
+        /**
+         * Do sleep {@code sleepMs} milliseconds
+         *
+         * @return amount of milliseconds to sleep
+         */
+        @QuerySqlFunction
+        @SuppressWarnings("BusyWait")
+        public static long sleep() {
+            long end = System.currentTimeMillis() + sleepMs;
+
+            long remainTime =sleepMs;
+
+            do {
+                try {
+                    Thread.sleep(remainTime);
+                }
+                catch (InterruptedException ignored) {
+                    // No-op
+                }
+            }
+            while ((remainTime = end - System.currentTimeMillis()) > 0);
+
+            return sleepMs;
+        }
+
+        /**
+         * Function do fail in case of {@code fail} is true, return 0 otherwise.
+         *
+         * @return in case of {@code fail} is false return 0, fail otherwise.
+         */
+        @QuerySqlFunction
+        public static int can_fail() {
+            if (fail)
+                throw new IllegalArgumentException();
+            else
+                return 0;
+        }
+
+        /**
+         * Function do sleep {@code sleepMs} milliseconds and do fail in case of {@code fail} is true, return 0 otherwise.
+         *
+         * @return amount of milliseconds to sleep in case of {@code fail} is false, fail otherwise.
+         */
+        @QuerySqlFunction
+        public static long sleep_and_can_fail() {
+            long sleep = sleep();
+
+            can_fail();
+
+            return sleep;
+        }
+    }
+
+    /**
+     * Runnable that can throw exceptions.
+     */
+    @FunctionalInterface
+    public interface RunnableX extends Runnable {
+        /**
+         * Runnable body.
+         *
+         * @throws Exception If failed.
+         */
+        void runx() throws Exception;
+
+        /** {@inheritdoc} */
+        @Override default void run() {
+            try {
+                runx();
+            }
+            catch (Exception e) {
+                throw new IgniteException(e);
+            }
+        }
+    }
+
+    /**
+     * IgniteRunnable that can throw exceptions.
+     */
+    @FunctionalInterface
+    public interface IgniteRunnableX extends IgniteRunnable {
+        /**
+         * Runnable body.
+         *
+         * @throws Exception If failed.
+         */
+        void runx() throws Exception;
+
+        /** {@inheritdoc} */
+        @Override default void run() {
+            try {
+                runx();
+            }
+            catch (Exception e) {
+                throw new IgniteException(e);
+            }
+        }
     }
 }

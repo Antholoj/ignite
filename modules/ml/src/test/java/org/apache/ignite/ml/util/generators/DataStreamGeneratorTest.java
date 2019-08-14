@@ -37,6 +37,7 @@ import org.apache.ignite.ml.environment.LearningEnvironment;
 import org.apache.ignite.ml.environment.LearningEnvironmentBuilder;
 import org.apache.ignite.ml.math.primitives.vector.Vector;
 import org.apache.ignite.ml.math.primitives.vector.VectorUtils;
+import org.apache.ignite.ml.preprocessing.Preprocessor;
 import org.apache.ignite.ml.structures.LabeledVector;
 import org.apache.ignite.ml.structures.LabeledVectorSet;
 import org.apache.ignite.ml.structures.partition.LabeledDatasetPartitionDataBuilderOnHeap;
@@ -158,13 +159,11 @@ public class DataStreamGeneratorTest {
         checkDataset(N / 2, b3, v -> (Double)v.label() < 0);
     }
 
-
-
     /** */
     private void checkDataset(int sampleSize, DatasetBuilder<Vector, Double> datasetBuilder,
         Predicate<LabeledVector> labelCheck) throws Exception {
 
-        try (Dataset<EmptyContext, LabeledVectorSet<Double, LabeledVector>> dataset = buildDataset(datasetBuilder)) {
+        try (Dataset<EmptyContext, LabeledVectorSet<LabeledVector>> dataset = buildDataset(datasetBuilder)) {
             List<LabeledVector> res = dataset.compute(this::map, this::reduce);
             assertEquals(sampleSize, res.size());
 
@@ -173,16 +172,16 @@ public class DataStreamGeneratorTest {
     }
 
     /** */
-    private Dataset<EmptyContext, LabeledVectorSet<Double, LabeledVector>> buildDataset(
+    private Dataset<EmptyContext, LabeledVectorSet<LabeledVector>> buildDataset(
         DatasetBuilder<Vector, Double> b1) {
         return b1.build(LearningEnvironmentBuilder.defaultBuilder(),
             new EmptyContextBuilder<>(),
-            new LabeledDatasetPartitionDataBuilderOnHeap<>((v, l) -> v, (v, l) -> l)
+            new LabeledDatasetPartitionDataBuilderOnHeap<>((Preprocessor<Vector, Double>)LabeledVector::new)
         );
     }
 
     /** */
-    private List<LabeledVector> map(LabeledVectorSet<Double, LabeledVector> d) {
+    private List<LabeledVector> map(LabeledVectorSet<LabeledVector> d) {
         return IntStream.range(0, d.rowSize()).mapToObj(d::getRow).collect(Collectors.toList());
     }
 

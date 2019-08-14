@@ -27,14 +27,16 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.internal.visor.VisorDataTransferObject;
 import org.jetbrains.annotations.Nullable;
 
-import static org.apache.ignite.internal.commandline.cache.CacheCommand.IDLE_VERIFY;
+import static org.apache.ignite.internal.commandline.cache.CacheSubcommands.IDLE_VERIFY;
 
 /**
  * Encapsulates result of {@link VerifyBackupPartitionsTaskV2}.
@@ -50,15 +52,19 @@ public class IdleVerifyResultV2 extends VisorDataTransferObject {
     private static final long serialVersionUID = 0L;
 
     /** Counter conflicts. */
+    @GridToStringInclude
     private Map<PartitionKeyV2, List<PartitionHashRecordV2>> cntrConflicts;
 
     /** Hash conflicts. */
+    @GridToStringInclude
     private Map<PartitionKeyV2, List<PartitionHashRecordV2>> hashConflicts;
 
     /** Moving partitions. */
+    @GridToStringInclude
     private Map<PartitionKeyV2, List<PartitionHashRecordV2>> movingPartitions;
 
     /** Exceptions. */
+    @GridToStringInclude
     private Map<ClusterNode, Exception> exceptions;
 
     /**
@@ -154,7 +160,18 @@ public class IdleVerifyResultV2 extends VisorDataTransferObject {
         print(printer, false);
 
         if (!F.isEmpty(exceptions)) {
-            File f = new File(IDLE_VERIFY_FILE_PREFIX + LocalDateTime.now().format(TIME_FORMATTER) + ".txt");
+            File wd = null;
+
+            try {
+                wd = U.resolveWorkDirectory(U.defaultWorkDirectory(), "", false);
+            }
+            catch (IgniteCheckedException e) {
+                printer.accept("Can't find work directory. " + e.getMessage() + "\n");
+
+                e.printStackTrace();
+            }
+
+            File f = new File(wd, IDLE_VERIFY_FILE_PREFIX + LocalDateTime.now().format(TIME_FORMATTER) + ".txt");
 
             try (PrintWriter pw = new PrintWriter(f)) {
                 print(pw::write, true);
@@ -177,41 +194,63 @@ public class IdleVerifyResultV2 extends VisorDataTransferObject {
 
     /** */
     private void print(Consumer<String> printer, boolean printExceptionMessages) {
-        if (!F.isEmpty(exceptions)) {
-            int size = exceptions.size();
+        boolean noMatchingCaches = false;
 
-            printer.accept("idle_verify failed on " + size + " node" + (size == 1 ? "" : "s") + ".\n");
+        boolean succeeded = true;
+
+        for (Exception e : exceptions.values()) {
+            if (e instanceof NoMatchingCachesException) {
+                noMatchingCaches = true;
+                succeeded = false;
+
+                break;
+            }
         }
 
-        if (!hasConflicts())
-            printer.accept("idle_verify check has finished, no conflicts have been found.\n");
-        else
-            printConflicts(printer);
+        if (succeeded) {
+            if (!F.isEmpty(exceptions)) {
+                int size = exceptions.size();
 
-        if (!F.isEmpty(movingPartitions())) {
-            printer.accept("Verification was skipped for " + movingPartitions().size() + " MOVING partitions:\n");
-
-            for (Map.Entry<PartitionKeyV2, List<PartitionHashRecordV2>> entry : movingPartitions().entrySet()) {
-                printer.accept("Rebalancing partition: " + entry.getKey() + "\n");
-
-                printer.accept("Partition instances: " + entry.getValue() + "\n");
+                printer.accept("idle_verify failed on " + size + " node" + (size == 1 ? "" : "s") + ".\n");
             }
 
-            printer.accept("\n");
+            if (!hasConflicts())
+                printer.accept("idle_verify check has finished, no conflicts have been found.\n");
+            else
+                printConflicts(printer);
+
+            if (!F.isEmpty(movingPartitions())) {
+                printer.accept("Verification was skipped for " + movingPartitions().size() + " MOVING partitions:\n");
+
+                for (Map.Entry<PartitionKeyV2, List<PartitionHashRecordV2>> entry : movingPartitions().entrySet()) {
+                    printer.accept("Rebalancing partition: " + entry.getKey() + "\n");
+
+                    printer.accept("Partition instances: " + entry.getValue() + "\n");
+                }
+
+                printer.accept("\n");
+            }
+        }
+        else {
+            printer.accept("\nidle_verify failed.\n");
+
+            if (noMatchingCaches)
+                printer.accept("\nThere are no caches matching given filter options.\n");
         }
 
         if (!F.isEmpty(exceptions())) {
-            printer.accept("Idle verify failed on nodes:\n");
+            printer.accept("\nIdle verify failed on nodes:\n");
 
             for (Map.Entry<ClusterNode, Exception> e : exceptions().entrySet()) {
                 ClusterNode n = e.getKey();
 
-                printer.accept("Node ID: " + n.id() + " " + n.addresses() + " consistent ID: " + n.consistentId() + "\n");
+                printer.accept("\nNode ID: " + n.id() + " " + n.addresses() + "\nConsistent ID: " + n.consistentId() + "\n");
 
                 if (printExceptionMessages) {
-                    printer.accept("Exception message:" + "\n");
+                    String msg = e.getValue().getMessage();
 
-                    printer.accept(e.getValue().getMessage() + "\n");
+                    printer.accept("Exception: " + e.getValue().getClass().getCanonicalName() + "\n");
+                    printer.accept(msg == null ? "" : msg + "\n");
                 }
             }
         }
